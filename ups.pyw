@@ -1,3 +1,4 @@
+import math
 from pprint import pprint
 import socket
 import time
@@ -9,7 +10,27 @@ def hms(seconds):
 	t = seconds;	h = t // 3600
 	t = t % 3600;	m = t // 60
 	t = t % 60;	s = t
-	return "%dh %dm" % (h, m)
+	return "%dh %02dm" % (h, m)
+
+def exstatus(status):
+	long = {
+		"OL": "on line power",
+		"OB": "on battery",
+		"LB": "battery low",
+		"HB": "battery high",
+		"RB": "replace battery",
+		"BYPASS": "bypass",
+		"CAL": "calibrating",
+		"OFF": "output offline",
+		"OVER": "overload",
+		"TRIM": "trimming",
+		"BOOST": "boosting",
+		"FSD": "forced shutdown",
+	}
+	st = []
+	for w in status.split():
+		st.append(long.get(w, w))
+	return ", ".join(st)
 
 class NutUps:
 	PORT = 3493
@@ -95,6 +116,8 @@ class NutUps:
 	def getvar(self, name):
 		self.tryconnect()
 		(val,) = self.getvars(name)
+		if val is None:
+			raise KeyError(val)
 		return val
 	
 	def getvars(self, *names):
@@ -125,75 +148,105 @@ servers = [
 
 root = tk.Tk()
 
+root.style = tk.ttk.Style()
+root.style.theme_use("classic")
+#root.style.theme_use("clam")
+#root.style.theme_use("default")
+
+from itertools import count
+
 class UpsInfoWidget:
+	def _addrow(self, label, central, right=None):
+		row = next(self._row)
+		label = tk.ttk.Label(self._frame, text=label)
+		if right:
+			label.grid(row=row, column=0, sticky=tk.E)
+			central.grid(row=row, column=1, sticky=tk.W)
+			right.grid(row=row, column=2, sticky=tk.W)
+		else:
+			label.grid(row=row, column=0, sticky=tk.E)
+			central.grid(row=row, column=1, columnspan=2, sticky=tk.W)
+	
 	def __init__(self, parent):
 		self.timer = None
 		
+		parent = tk.ttk.Frame(parent, padding=5)
+		parent.pack()
+		
 		frame = tk.ttk.Frame(parent, padding=(10,5,10,5))
+		frame["relief"] = "groove"
+		frame["borderwidth"] = 2
 		frame.pack()
-
-		tk.Label(frame, text="UPS:").grid(row=0, column=0, sticky=tk.E)
-		tk.Label(frame, text="Battery:").grid(row=1, column=0, sticky=tk.E)
-		tk.Label(frame, text="Load:").grid(row=2, column=0, sticky=tk.E)
-		tk.Label(frame, text="Runtime:").grid(row=3, column=0, sticky=tk.E)
-		tk.Label(frame, text="Power:").grid(row=4, column=0, sticky=tk.E)
-
-		self.server_str = tk.Label(frame, justify=tk.LEFT)
-		self.server_str.grid(row=0, column=1, columnspan=2, sticky=tk.W)
-
+		
+		self._frame = frame
+		self._row = count()
+		
+		self.server_str = tk.ttk.Label(frame, justify=tk.LEFT)
+		self._addrow("UPS:", self.server_str)
+		
+		self.status_str = tk.ttk.Label(frame, justify=tk.LEFT)
+		self._addrow("Status:", self.status_str)
+		
 		self.batt_bar = tk.ttk.Progressbar(frame)
-		self.batt_bar.grid(row=1, column=1)
-
-		self.batt_str = tk.Label(frame)
-		self.batt_str.grid(row=1, column=2, sticky=tk.E)
-
+		self.batt_str = tk.ttk.Label(frame)
+		self._addrow("Battery:", self.batt_bar, self.batt_str)
+		
+		self.runeta_str = tk.ttk.Label(frame)
+		self._addrow("Runtime:", self.runeta_str)
+		
 		self.load_bar = tk.ttk.Progressbar(frame)
-		self.load_bar.grid(row=2, column=1)
-
-		self.load_str = tk.Label(frame)
-		self.load_str.grid(row=2, column=2, sticky=tk.E)
-
-		self.runeta_str = tk.Label(frame)
-		self.runeta_str.grid(row=3, column=1, columnspan=2, sticky=tk.W)
-
-		self.power_str = tk.Label(frame)
-		self.power_str.grid(row=4, column=1, columnspan=2, sticky=tk.W)
+		self.load_str = tk.ttk.Label(frame)
+		self._addrow("Load:", self.load_bar, self.load_str)
+		
+		self.power_str = tk.ttk.Label(frame)
+		self._addrow("Power:", self.power_str)
 
 	def updateonce(self, ups):
-		print("called for", ups.hostname)
 		self.server_str["text"] = "%s on %s" % (ups.upsname, ups.hostname)
-
-		batt, load, runeta = ups.getvars("battery.charge", "ups.load", "battery.runtime")
 		
-		self.batt_bar["value"] = int(float(batt))
-		self.batt_str["text"] = "%s%%" % int(float(batt))
+		vars = ups.listvars()
 		
-		self.load_bar["value"] = int(float(load))
-		self.load_str["text"] = "%s%%" % int(float(load))
+		self.status_str["text"] = exstatus(vars["ups.status"])
 		
-		self.runeta_str["text"] = hms(int(float(runeta)))
+		batt = float(vars["battery.charge"])
+		load = float(vars["ups.load"])
+		runeta = float(vars["battery.runtime"])
+		
+		self.batt_bar["value"] = int(batt)
+		self.batt_str["text"] = "%.0f%%" % batt
+		
+		self.load_bar["value"] = int(load)
+		self.load_str["text"] = "%.0f%%" % load
+		
+		self.runeta_str["text"] = hms(int(runeta))
 		
 		# VA is apparent power, W is real power (identical in DC)
 		# V * A => W
 		# rms(V) * rms(A) => VA
 		# VA * pf => W
-		try:
-			# realpower is in watts?
-			maxpower = float(ups.getvar("ups.realpower.nominal"))
-			curpower = maxpower * float(load) / 100
-			self.power_str["text"] = "approx. %.0fW" % curpower
-		except KeyError:
+		
+		if "ups.realpower.nominal" in vars:
+			# apcupsd reports this only (no output current and only inverter voltage)
+			maxrealpower = float(vars["ups.realpower.nominal"])
+			realpower = maxrealpower * load / 100
+			self.power_str["text"] = "approx. ~%.0fW" % realpower
+		elif "ups.power.nominal" in vars:
+			# Orvaldi reports these
 			# power is in VA, power*powerfactor is in watts
 			# output.voltage * output.current == power.nominal * load * powerfactor
-			nompower = ups.getvar("ups.power.nominal")
-			pwrfactor = ups.getvar("output.powerfactor")
-			curpower = float(nompower) * float(load) / 100 * float(pwrfactor)
-			self.power_str["text"] = "approx. %.0fW" % curpower
-			
-			# outcurrent = float(ups.getvar("output.current"))
-			# outvoltage = float(ups.getvar("output.voltage"))
-			# realpower = outcurrent * outvoltage
+			maxapprpower = float(vars["ups.power.nominal"])
+			pwrfactor = float(vars["output.powerfactor"])
+			realpower = maxapprpower * load / 100 * pwrfactor
+		elif "output.current" in vars and "output.voltage" in vars:
+			# rank this down because it'd be wrong for APC, although it would 
+			# work fine for Orvaldi
+			outcurrent = float(vars["output.current"])
+			outvoltage = float(vars["output.voltage"])
+			realpower = outcurrent * outvoltage
 		
+		realpower = round(realpower/10)*10
+		self.power_str["text"] = "approx. ~%.0fW" % realpower
+			
 	def updatetimer(self, ups):
 		self.updateonce(ups)
 		self.timer = root.after(interval, self.updatetimer, ups)
@@ -203,7 +256,7 @@ class UpsInfoWidget:
 		self.thread.start()
 		self.timer = root.after(interval, self.bgupdate, ups)
 
-interval = 1*1000
+interval = 5*1000
 for h, u in servers:
 	ups = NutUps(h, u)
 	ifr = UpsInfoWidget(root)
