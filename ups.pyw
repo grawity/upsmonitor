@@ -1,17 +1,22 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*-
-from __future__ import print_function
-from itertools import count
+# Compatibility notes:
+#   Python 2.5 (last official build for Windows 98):
+#     - 'with' is a future import until 2.6
+#     - No 'print_function' (new in 2.6)
+#     - No 'except..as..' (new in 2.6 or 2.7)
+#     - Use sys.exc_info() to retain compat with both 2.5 and 3.12
+from __future__ import with_statement
+#from __future__ import print_function
+
 import math
 import os
-from pprint import pprint
 import shlex
 import socket
 import struct
 import sys
-import time
 import threading
 
-if sys.version_info.major == 2:
+if sys.version_info[0] <= 2:
 	import Tkinter as tk
 	import tkFont as tkfont
 	ttk = None
@@ -19,14 +24,33 @@ else:
 	import tkinter as tk
 	import tkinter.font as tkfont
 	import tkinter.ttk as ttk
-	#ttk = None
+
+#ttk = None
+ttkstyle = None
+#ttkstyle = "classic"
+#ttkstyle = "clam"
+#ttkstyle = "default"
+ttkprogressbar = True
+#ttkprogressbar = False
+
+if sys.platform == "win32":
+	VER_WIN98 = (4, 10, 67766446)
+	VER_WINXP = (5, 1, 2600)
+
+	if sys.getwindowsversion()[:3] == VER_WINXP:
+		#ttkstyle = "classic"
+		pass
+	
+	# Threaded updates don't work on Windows 98
+	if sys.getwindowsversion()[:2] < VER_WINXP:
+		print("disabling threaded updates")
+		threading = None
 
 def loadservers(path):
 	# .ups.conf contains a list of UPS addreses, one 'ups@host' per line, with
 	# optional description after the address. An address with only '@host' means
 	# an apcupsd server instead of a NUT server.
 
-	# Note: 'with' is only in 2.6 and later
 	servers = []
 	with open(path, "r") as fh:
 		for line in fh:
@@ -110,16 +134,16 @@ def softclose(file):
 		except:
 			pass
 
-class NutError(Exception):
+class UpsError(Exception):
 	pass
 
-class NutProtocolError(IOError):
+class UpsProtocolError(IOError):
 	pass
 
 class Ups:
 	PORT = 0
 	FMODE = "rw"
-	
+
 	def __init__(self, address):
 		self.upsname, _, self.hostname = address.rpartition("@")
 		self.hostname = self.hostname or "localhost"
@@ -181,9 +205,9 @@ class NutUps(Ups):
 	def recvone(self):
 		line = self.recv()
 		if line is None:
-			raise NutProtocolError("End of stream")
+			raise UpsProtocolError("End of stream")
 		elif not line:
-			raise NutProtocolError("Empty line")
+			raise UpsProtocolError("Empty line")
 		words = self.tokenize(line)
 		return words
 
@@ -193,23 +217,23 @@ class NutUps(Ups):
 		while True:
 			resp = self.recvone()
 			if resp[0] == "ERR":
-				raise NutError(*resp[1:])
+				raise UpsError(*resp[1:])
 			elif resp[0] == "BEGIN":
 				if topic is not None:
-					raise NutProtocolError("BEGIN in the middle of a list: %r" % (resp,))
+					raise UpsProtocolError("BEGIN in the middle of a list: %r" % (resp,))
 				if len(resp) < 3 or resp[1] != "LIST":
-					raise NutProtocolError("Not enough parameters: %r" % (resp,))
+					raise UpsProtocolError("Not enough parameters: %r" % (resp,))
 				topic = resp[2]
 			elif resp[0] == "END":
 				if topic is None:
-					raise NutProtocolError("END without BEGIN: %r" % (resp,))
+					raise UpsProtocolError("END without BEGIN: %r" % (resp,))
 				if len(resp) < 3 or resp[1] != "LIST":
-					raise NutProtocolError("Not enough parameters: %r" % (resp,))
+					raise UpsProtocolError("Not enough parameters: %r" % (resp,))
 				break
 			elif resp[0] == topic:
 				items.append(tuple(resp[1:]))
 			else:
-				raise NutProtocolError("Unexpected: %r" % (resp,))
+				raise UpsProtocolError("Unexpected: %r" % (resp,))
 		return items
 
 	def listvars(self):
@@ -228,33 +252,33 @@ class NutUps(Ups):
 			if resp[1] == "VAR-NOT-SUPPORTED":
 				raise KeyError(name)
 			else:
-				raise NutError(*resp[1:])
+				raise UpsError(*resp[1:])
 		elif resp[0] == "VAR":
 			if len(resp) < 4:
-				raise NutProtocolError("Not enough parameters: %r" % (resp,))
+				raise UpsProtocolError("Not enough parameters: %r" % (resp,))
 			elif resp[1:3] != (self.upsname, name):
-				raise NutProtocolError("Desynchronized: %r; expected: %r" % (resp, name))
+				raise UpsProtocolError("Desynchronized: %r; expected: %r" % (resp, name))
 			return resp[3]
 		else:
-			raise NutProtocolError("Unexpected: %r" % (resp,))
+			raise UpsProtocolError("Unexpected: %r" % (resp,))
 
 class ApcupsdUps(Ups):
 	PORT = 3551
 	FMODE = "rwb"
-	
+
 	def send(self, command):
 		self.tryconnect()
 		buf = command.encode("utf-8")
 		buf = struct.pack(">h", len(buf)) + buf
 		self.stream.write(buf)
 		self.stream.flush()
-	
+
 	def recvone(self):
 		buf = self.stream.read(2)
 		length, = struct.unpack(">h", buf)
 		buf = self.stream.read(length)
 		return buf.decode("utf-8")
-	
+
 	def getstatus(self):
 		self.send("status")
 		vars = {}
@@ -266,14 +290,14 @@ class ApcupsdUps(Ups):
 			key = key.rstrip()
 			val = val.rstrip("\n")
 			if not vars and key != "APC":
-				raise NutProtocolError("Status did not start with 'APC' key: %r" % [key, val])
+				raise UpsProtocolError("Status did not start with 'APC' key: %r" % [key, val])
 			if "END APC" in vars:
-				raise NutProtocolError("Unexpected variable after 'END APC': %r" % [key, val])
+				raise UpsProtocolError("Unexpected variable after 'END APC': %r" % [key, val])
 			vars[key] = val
 		if "END APC" not in vars:
-			raise NutProtocolError("Status did not finish with 'END APC' key: %r" % vars)
+			raise UpsProtocolError("Status did not finish with 'END APC' key: %r" % vars)
 		return vars
-	
+
 	def listvars(self):
 		intmap = {
 			"BATTV":	"battery.voltage",
@@ -299,90 +323,90 @@ class ApcupsdUps(Ups):
 						nval.append("OL")
 				nvars["ups.status"] = " ".join(nval) or "UNKNOWN"
 		return nvars
-			
-if ttk:
-	TkFrame = ...
-	TkLabel = ttk.Label
-	TkLabelFrame = ...
-	TkProgressBar = ttk.Progressbar
 
+class TkCustomWidget:
+	def config(self, **kv):
+		for key, value in kv.items():
+			self[key] = value
+
+	configure = config
+
+	def pack(self, *a, **kw):
+		self.outer.pack(*a, **kw)
+
+	def grid(self, *a, **kw):
+		self.outer.grid(*a, **kw)
+
+if ttk:
 	def cnfpadding(cnf):
 		padx = 0
+		pady = 0
 		if "padx" in cnf:
 			padx = cnf["padx"]
 			del cnf["padx"]
-		pady = 0
 		if "pady" in cnf:
 			pady = cnf["pady"]
 			del cnf["pady"]
 		if padx or pady:
-			# left, top, right, bottom
 			cnf["padding"] = (padx, pady, padx, pady)
 		return cnf
 
 	class TkFrame(ttk.Frame):
-		def __init__(self, master=None, cnf={}, **kw):
+		def __init__(self, parent=None, cnf={}, **kw):
 			cnf = tk._cnfmerge((cnf, kw))
 			cnf = cnfpadding(cnf)
-			ttk.Frame.__init__(self, master, **cnf)
+			ttk.Frame.__init__(self, parent, **cnf)
 
 	class TkLabelFrame(ttk.LabelFrame):
-		def __init__(self, master=None, cnf={}, **kw):
+		def __init__(self, parent=None, cnf={}, **kw):
 			cnf = tk._cnfmerge((cnf, kw))
 			cnf = cnfpadding(cnf)
-			ttk.LabelFrame.__init__(self, master, **cnf)
+			ttk.LabelFrame.__init__(self, parent, **cnf)
 
+	TkLabel = ttk.Label
 else:
-	TkFrame = tk.Frame
-	TkLabel = tk.Label
-	TkLabelFrame = ...
-	TkProgressBar = ...
-
-	class TkCustomWidget:
-		def config(self, **kv):
-			for key, value in kv.items():
-				self[key] = value
-
-		configure = config
-
-		def pack(self, *a, **kw):
-			self.outer.pack(*a, **kw)
-
-		def grid(self, *a, **kw):
-			self.outer.grid(*a, **kw)
-
 	class TkLabelFrame(tk.LabelFrame):
-		def __init__(self, master=None, cnf={}, **kw):
-			tk.LabelFrame.__init__(self, master, cnf, **kw)
+		def __init__(self, parent=None, cnf={}, **kw):
+			tk.LabelFrame.__init__(self, parent, cnf, **kw)
 			#self["font"] = "%s bold" % self["font"]
 			# default is "{MS Sans Serif} 8" on Win98, but "TkDefaultFont" on Win11
 
+	TkFrame = tk.Frame
+	TkLabel = tk.Label
+
+if ttk and ttkprogressbar:
+	TkProgressBar = ttk.Progressbar
+else:
 	class TkProgressBar(TkCustomWidget):
-		def __init__(self, master=None, *, value=0, length=100, height=12):
+		def __init__(self, parent=None, value=0, length=100, height=12):
 			self.value = value
 			self.width = length
 			self.height = height
-			self.outer = tk.Frame(master, borderwidth=2, relief="sunken", padx=1, pady=1)
-			self.bg = tk.Frame(self.outer)#, bg="#999999")
+			self.outer = tk.Frame(parent, borderwidth=2, relief="sunken", padx=1, pady=1)
+			self.bg = tk.Frame(self.outer)
 			self.bg.columnconfigure(0, minsize=self.width)
 			self.bg.rowconfigure(0, minsize=self.height)
 			self.bg.pack()
-			self.bar = tk.Frame(self.bg, width=0, height=self.height, bg="#4a6984")
-			# bg="#996666"
+			self.bar = tk.Frame(self.bg, width=0, height=self.height, bg=self.colorforvalue(0))
 			self.bar.grid_propagate(0)
 			self.bar.grid(row=0, column=0, sticky=tk.N+tk.S+tk.W)
+
+		def colorforvalue(self, value):
+			#return "#994444"
+			return "#4a6984" # classic Ttk progress bar color
 
 		def __setitem__(self, key, value):
 			if key == "value":
 				self.value = clamp(value, 0, 100)
-				self.bar.config(width=int(self.width / 100.0 * self.value))
+				self.bar.config(width=int(self.width / 100.0 * self.value),
+								bg=self.colorforvalue(self.value))
 			else:
 				raise KeyError(key)
 
-class UpsInfoWidget:
+class UpsInfoWidget(TkCustomWidget):
 	def _addrow(self, label, central, right=None):
-		row = next(self._row)
-		label = TkLabel(self._frame, text=label)
+		row = self.numrows; self.numrows += 1
+		label = TkLabel(self.frame, text=label)
 		if right:
 			label.grid(row=row, column=0, sticky=tk.E, padx=2)
 			central.grid(row=row, column=1, sticky=tk.W)
@@ -400,37 +424,34 @@ class UpsInfoWidget:
 		self.timer = None
 		self.valid = True
 
-		# Outer padding (between elements)
-		parent = TkFrame(parent, padx=5, pady=5)
-		parent.pack()
-
-		frame = TkLabelFrame(parent, padx=5, pady=3)
-		frame.pack()
-
-		self._frame = frame
-		self._row = count()
+		self.outer = TkFrame(parent, padx=5, pady=5)
+		self.frame = TkLabelFrame(self.outer, padx=5, pady=3)
+		self.frame.pack()
+		# Reduce relayouting on update, by always giving space for 4 chars
+		self.frame.columnconfigure(2, minsize=4*10)
+		self.numrows = 0
 
 		#self.server_str = TkLabel(frame, justify=tk.LEFT)
 		#self._addrow("UPS:", self.server_str)
 
-		self.status_str = TkLabel(frame, justify=tk.LEFT)
+		self.status_str = TkLabel(self.frame, justify=tk.LEFT)
 		self._addrow("Status:", self.status_str)
 
-		self.batt_bar = TkProgressBar(frame, length=120)
-		self.batt_str = TkLabel(frame)
+		self.batt_bar = TkProgressBar(self.frame, length=120)
+		self.batt_str = TkLabel(self.frame)
 		self._addrow("Battery:", self.batt_bar, self.batt_str)
 
-		self.runeta_str = TkLabel(frame)
+		self.runeta_str = TkLabel(self.frame)
 		self._addrow("Runtime:", self.runeta_str)
 
-		self.load_bar = TkProgressBar(frame, length=120)
-		self.load_str = TkLabel(frame)
+		self.load_bar = TkProgressBar(self.frame, length=120)
+		self.load_str = TkLabel(self.frame)
 		self._addrow("Load:", self.load_bar, self.load_str)
 
-		self.power_str = TkLabel(frame)
+		self.power_str = TkLabel(self.frame)
 		self._addrow("Power:", self.power_str)
 
-		self._frame.config(text=self.title)
+		self.frame.config(text=self.title)
 		#self.server_str.config(text=self.title)
 		self.updateclear(text="connecting")
 
@@ -440,14 +461,18 @@ class UpsInfoWidget:
 
 		try:
 			return self.ups.listvars()
-		except (OSError, IOError) as e:
+		except (OSError, IOError):
+			e = sys.exc_info()[1]
+			# External errors, usually non-fatal
 			print("error (%r): %r" % (self.ups, e))
 			self.ups.close()
 			if isretry:
 				return None
 			self.updateclear("connection lost")
 			return self.softlistvars(isretry=True)
-		except NutError as e:
+		except UpsError:
+			e = sys.exc_info()[1]
+			# Errors from UPS daemon, usually fatal
 			print("error (%r): %r" % (self.ups, e))
 			self.ups.close()
 			self.valid = False
@@ -474,8 +499,9 @@ class UpsInfoWidget:
 		batt = float(vars["battery.charge"])
 		load = float(vars["ups.load"])
 		runeta = float(vars["battery.runtime"])
+		if runeta > 3600:
+			runeta = round(runeta / 600) * 600		# 10 min. precision
 		realpower = nutgetpower(vars)
-		runeta = round(runeta / 600) * 600		# 10 min. precision
 		realpower = round(realpower / 10) * 10	# 10 W precision
 
 		self.status_str.config(state=tk.NORMAL, text=nutstrstatus(vars["ups.status"]))
@@ -490,11 +516,11 @@ class UpsInfoWidget:
 		self.updateonce()
 		self.timer = root.after(interval, self.updatetimer)
 
-	def bgupdate(self):
+	def updatethread(self):
 		self.thread = threading.Thread(target=self.updateonce)
 		self.thread.start()
-		self.timer = root.after(interval, self.bgupdate)
-		
+		self.timer = root.after(interval, self.updatethread)
+
 root = tk.Tk()
 
 if ttk:
@@ -513,18 +539,6 @@ confpath = [
 ]
 servers = loadservers(confpath[0])
 interval = 5*1000
-ttkstyle = None
-#ttkstyle = "classic"
-#ttkstyle = "clam"
-#ttkstyle = "default"
-
-# sys.platform	os.name
-# "win32"		"nt"
-
-if sys.platform == "win32":
-	if sys.getwindowsversion()[:3] == (5, 1, 2600):
-		#ttkstyle = "classic"
-		pass
 
 if ttk and ttkstyle:
 	ttk.Style().theme_use(ttkstyle)
@@ -537,8 +551,11 @@ for addr, desc in servers:
 	else:
 		ups = NutUps(addr)
 	ifr = UpsInfoWidget(root, ups, desc)
-	root.after(100, ifr.bgupdate)
-	#root.after(100, ifr.updatetimer)
+	ifr.pack()
+	if threading:
+		root.after(100, ifr.updatethread)
+	else:
+		root.after(100, ifr.updatetimer)
 
 #def server_changed(new_value):
 #	if infoframe.timer:
