@@ -6,7 +6,7 @@
 #     - No 'except..as..' (new in 2.6 or 2.7)
 #     - Use sys.exc_info() to retain compat with both 2.5 and 3.12
 from __future__ import with_statement
-#from __future__ import print_function
+from __future__ import print_function
 
 import math
 import os
