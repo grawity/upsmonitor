@@ -1,12 +1,6 @@
-# -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*-
-# Compatibility notes:
-#   Python 2.5 (last official build for Windows 98):
-#     - 'with' is a future import until 2.6
-#     - No 'print_function' (new in 2.6)
-#     - No 'except..as..' (new in 2.6 or 2.7)
-#     - Use sys.exc_info() to retain compat with both 2.5 and 3.12
-from __future__ import with_statement
+# -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
 from __future__ import print_function
+from __future__ import with_statement
 
 import math
 import os
@@ -19,11 +13,18 @@ import threading
 if sys.version_info[0] <= 2:
 	import Tkinter as tk
 	import tkFont as tkfont
+	# Although Py2.x has 'ttk', support for 2.x is mostly targeted to Win98,
+	# where it crashes with TclError (missing tile.tcl), so we don't use it.
+	#import ttk
 	ttk = None
+	from tkSimpleDialog import askstring
+	from tkMessageBox import showinfo, showerror
 else:
 	import tkinter as tk
 	import tkinter.font as tkfont
 	import tkinter.ttk as ttk
+	from tkinter.simpledialog import askstring
+	from tkinter.messagebox import showinfo, showerror
 
 #ttk = None
 ttkstyle = None
@@ -34,23 +35,25 @@ ttkprogressbar = True
 #ttkprogressbar = False
 
 if sys.platform == "win32":
-	VER_WIN98 = (4, 10, 67766446)
+	VER_WIN95C = (4, 0, 67109975)
+	VER_WIN98SE = (4, 10, 67766446)
 	VER_WINXP = (5, 1, 2600)
 
-	if sys.getwindowsversion()[:3] == VER_WINXP:
-		#ttkstyle = "classic"
-		pass
-	
 	# Threaded updates don't work on Windows 98
 	if sys.getwindowsversion()[:2] < VER_WINXP:
 		print("disabling threaded updates")
 		threading = None
 
+if sys.platform in ("linux2", "linux"):
+	# All default Ttk themes look kind of bad on X11 (clam is okay but I need
+	# to figure out how to set less-bland colors for the fillbar).
+	#ttkstyle = "classic"
+	ttkprogressbar = False
+
 def loadservers(path):
 	# .ups.conf contains a list of UPS addreses, one 'ups@host' per line, with
 	# optional description after the address. An address with only '@host' means
 	# an apcupsd server instead of a NUT server.
-
 	servers = []
 	with open(path, "r") as fh:
 		for line in fh:
@@ -64,6 +67,22 @@ def loadservers(path):
 			upsdesc = line[1] if len(line) >= 2 else None
 			servers.append((upsaddr, upsdesc))
 	return servers
+
+def tryloadservers(paths):
+	for path in paths:
+		try:
+			return loadservers(path)
+		except (OSError, IOError):
+			pass
+	return []
+
+def writeservers(path, servers):
+	with open(path, "a") as fh:
+		for addr, desc in servers:
+			if desc:
+				fh.write("%s\t\t%s\n" % (addr, desc))
+			else:
+				fh.write("%s\n" % (addr,))
 
 def clamp(x, low, high):
 	return min(max(x, low), high)
@@ -127,7 +146,7 @@ def nutgetpower(vars):
 		realpower = 0
 	return realpower
 
-def softclose(file):
+def tryclose(file):
 	if file is not None:
 		try:
 			file.close()
@@ -174,8 +193,8 @@ class Ups:
 			self.connect()
 
 	def close(self):
-		self.stream = softclose(self.stream)
-		self.sock = softclose(self.sock)
+		self.stream = tryclose(self.stream)
+		self.sock = tryclose(self.sock)
 
 class NutUps(Ups):
 	PORT = 3493
@@ -265,6 +284,9 @@ class NutUps(Ups):
 class ApcupsdUps(Ups):
 	PORT = 3551
 	FMODE = "rwb"
+
+	def __repr__(self):
+		return "ApcupsdUps(%r)" % self.address
 
 	def send(self, command):
 		self.tryconnect()
@@ -368,8 +390,11 @@ else:
 	class TkLabelFrame(tk.LabelFrame):
 		def __init__(self, parent=None, cnf={}, **kw):
 			tk.LabelFrame.__init__(self, parent, cnf, **kw)
-			#self["font"] = "%s bold" % self["font"]
-			# default is "{MS Sans Serif} 8" on Win98, but "TkDefaultFont" on Win11
+			# Default is "{MS Sans Serif} 8" on Win98, so we can make it bold
+			# while keeping the same face and size. (Latest Tk on Win11 sets
+			# this to "TkDefaultFont".)
+			if self["font"].startswith("{MS Sans Serif} "):
+			    self["font"] = "%s bold" % self["font"]
 
 	TkFrame = tk.Frame
 	TkLabel = tk.Label
@@ -476,7 +501,7 @@ class UpsInfoWidget(TkCustomWidget):
 			print("error (%r): %r" % (self.ups, e))
 			self.ups.close()
 			self.valid = False
-			self.updateclear("invalid: %s" % e.args[0])
+			self.updateclear("invalid (%s)" % e.args[0])
 			print("giving up on %r" % self.ups)
 			return None
 
@@ -488,8 +513,6 @@ class UpsInfoWidget(TkCustomWidget):
 		self.load_str.config(state=tk.DISABLED, text="???%")
 		self.runeta_str.config(state=tk.DISABLED, text="--")
 		self.power_str.config(state=tk.DISABLED, text="--")
-		if not self.valid:
-			self.status_str.config(state=tk.DISABLED)
 
 	def updateonce(self):
 		vars = self.softlistvars()
@@ -521,7 +544,21 @@ class UpsInfoWidget(TkCustomWidget):
 		self.thread.start()
 		self.timer = root.after(interval, self.updatethread)
 
+# Load configured hosts
+
+confpaths = [os.path.join(sys.path[0], ".ups.conf"),
+             os.path.expanduser("~/.ups.conf"),
+             os.path.expanduser("~/.config/ups.conf")]
+if len(sys.argv) > 1:
+	servers = [(a, None) for a in sys.argv[1:]]
+else:
+	servers = tryloadservers(confpaths)
+interval = 5*1000
+
+# Initialize Tk
+
 root = tk.Tk()
+root.title("UPS status")
 
 if ttk:
 	# It seems that Ttk has magic for determining the correct family and
@@ -533,37 +570,36 @@ if ttk:
 	#boldfont.configure(weight=tkfont.BOLD)
 	ttk.Style().configure("TLabelframe.Label", font=("TkDefaultFont", -12, tkfont.BOLD))
 
-confpath = [
-	os.path.join(sys.path[0], ".ups.conf"),
-	os.path.expanduser("~/.ups.conf"),
-]
-servers = loadservers(confpath[0])
-interval = 5*1000
-
 if ttk and ttkstyle:
 	ttk.Style().theme_use(ttkstyle)
 
-root.title("UPS status")
+# Show main window
+
+saveservers = False
+if not servers:
+	answer = askstring("upsmonitor",
+	                   "No devices found in .ups.conf\n\nUPS address (name@host):")
+	if answer:
+		servers.append((answer, None))
+		saveservers = True
 
 for addr, desc in servers:
 	if addr.startswith("@"):
 		ups = ApcupsdUps("apcupsd" + addr)
-	else:
+	elif "@" in addr:
 		ups = NutUps(addr)
+	else:
+		showerror("upsmonitor", "Invalid UPS address '%s'." % (addr,))
+		exit()
 	ifr = UpsInfoWidget(root, ups, desc)
 	ifr.pack()
 	if threading:
-		root.after(100, ifr.updatethread)
+		root.after(10, ifr.updatethread)
 	else:
 		root.after(100, ifr.updatetimer)
 
-#def server_changed(new_value):
-#	if infoframe.timer:
-#		root.after_cancel(infoframe.timer)
-#		infoframe.timer = None
-#server_var = tk.StringVar(frame, value="Select server")
-#server_strs = [pair2str(h, u) for (h, u) in servers]
-#server_menu = tk.OptionMenu(frame, server_var, *server_strs, command=server_changed)
-#server_menu.pack()
+if saveservers:
+	writeservers(confpaths[0], servers)
+	showinfo("upsmonitor", "Address stored in .ups.conf")
 
 root.mainloop()
