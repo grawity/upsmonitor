@@ -1,3 +1,4 @@
+#!/usr/bin/env -S python
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
 from __future__ import print_function
 from __future__ import with_statement
@@ -33,15 +34,19 @@ ttkstyle = None
 #ttkstyle = "default"
 ttkprogressbar = True
 #ttkprogressbar = False
+fontsize = 12
 
 if sys.platform == "win32":
-	VER_WIN95C = (4, 0, 67109975)
+	VER_WIN95C  = (4, 0, 67109975)
 	VER_WIN98SE = (4, 10, 67766446)
-	VER_WINXP = (5, 1, 2600)
+	VER_WINXP   = (5, 1, 2600)
 
-	# Threaded updates don't work on Windows 98
-	if sys.getwindowsversion()[:2] < VER_WINXP:
-		print("disabling threaded updates")
+	# Threaded updates don't work on Windows 98 (4,1,z) -- the program
+	# seems to completely wedge up at that point.
+	# (Not yet tested: Win2000/ME/NT4)
+	winver = sys.getwindowsversion()
+	if winver[:3] <= VER_WIN98SE:
+		print("disabling threaded updates for Windows %d.%d.%d" % winver[:3])
 		threading = None
 
 if sys.platform in ("linux2", "linux"):
@@ -93,25 +98,43 @@ def hms(seconds):
 	t = t % 60;	s = t
 	return "%dh %02dm" % (h, m)
 
-def nutstrstatus(status):
+def nutstrstatus(vars):
+	status = vars["ups.status"]
+	alarm = vars.get("ups.alarm")
 	long = {
-		"OL": "on line power",
-		"OB": "on battery",
-		"LB": "battery low",
-		"HB": "battery high",
-		"RB": "replace battery",
-		"BYPASS": "bypass",
-		"CAL": "calibrating",
-		"OFF": "output offline",
-		"OVER": "overload",
-		"TRIM": "trimming",
-		"BOOST": "boosting",
-		"FSD": "forced shutdown",
+		"OL":		"on line power",
+		"OB":		"on battery",
+		"LB":		"battery low",
+		"HB":		"battery high",
+		"RB":		"replace battery",
+		"BYPASS":	"bypass",
+		"CAL":		"calibrating",
+		"OFF":		"output offline",
+		"OVER":		"overload",
+		"TRIM":		"trimming",
+		"BOOST":	"boosting",
+		"FSD":		"forced shutdown",
 	}
-	st = []
+	strs = []
+	if alarm:
+		if alarm == "BOOST":
+			pass
+		else:
+			strs.append("alarm [%s]" % alarm)
 	for w in status.split():
-		st.append(long.get(w, w))
-	return ", ".join(st) #.capitalize()
+		st = long.get(w, w)
+		if w == "OL" and status != "OL":
+			# boost/trim already imply 'on line' (sort of)
+			continue
+		if w == "ALARM" and alarm:
+			continue
+		if w == "BOOST" or w == "TRIM":
+			# safe to assume that a UPS that reports boost/trim will also
+			# report input voltage; even the relatively dumb APC Back-UPS
+			# (which is not even line-interactive) reports it.
+			st += " (input %.1fV)" % float(vars["input.voltage"])
+		strs.append(st)
+	return "; ".join(strs) #.capitalize()
 
 def nutgetpower(vars):
 	# Get approximate 'real' power usage in W.
@@ -227,7 +250,11 @@ class NutUps(Ups):
 			raise UpsProtocolError("End of stream")
 		elif not line:
 			raise UpsProtocolError("Empty line")
-		words = self.tokenize(line)
+		try:
+			words = self.tokenize(line)
+		except ValueError:
+			e = sys.exc_info(1)
+			raise UpsProtocolError("Tokenize error - %s: %r" % (e, line))
 		return words
 
 	def recvlist(self):
@@ -312,12 +339,12 @@ class ApcupsdUps(Ups):
 			key = key.rstrip()
 			val = val.rstrip("\n")
 			if not vars and key != "APC":
-				raise UpsProtocolError("Status did not start with 'APC' key: %r" % [key, val])
+				raise UpsProtocolError("Status did not start with 'APC': %r" % [key, val])
 			if "END APC" in vars:
-				raise UpsProtocolError("Unexpected variable after 'END APC': %r" % [key, val])
+				raise UpsProtocolError("Unexpected data after 'END APC': %r" % [key, val])
 			vars[key] = val
 		if "END APC" not in vars:
-			raise UpsProtocolError("Status did not finish with 'END APC' key: %r" % vars)
+			raise UpsProtocolError("Status did not finish with 'END APC': %r" % vars)
 		return vars
 
 	def listvars(self):
@@ -343,6 +370,8 @@ class ApcupsdUps(Ups):
 				for v in aval:
 					if v == "ONLINE":
 						nval.append("OL")
+					else:
+						print("ApcUps: unknown STATUS value %r" % v)
 				nvars["ups.status"] = " ".join(nval) or "UNKNOWN"
 		return nvars
 
@@ -403,10 +432,11 @@ if ttk and ttkprogressbar:
 	TkProgressBar = ttk.Progressbar
 else:
 	class TkProgressBar(TkCustomWidget):
-		def __init__(self, parent=None, value=0, length=100, height=12):
+		def __init__(self, parent=None, value=0, length=100):
+			global fontsize
 			self.value = value
 			self.width = length
-			self.height = height
+			self.height = fontsize
 			self.outer = tk.Frame(parent, borderwidth=2, relief="sunken", padx=1, pady=1)
 			self.bg = tk.Frame(self.outer)
 			self.bg.columnconfigure(0, minsize=self.width)
@@ -433,11 +463,11 @@ class UpsInfoWidget(TkCustomWidget):
 		row = self.numrows; self.numrows += 1
 		label = TkLabel(self.frame, text=label)
 		if right:
-			label.grid(row=row, column=0, sticky=tk.E, padx=2)
+			label.grid(row=row, column=0, sticky=tk.E, padx=2, pady=1)
 			central.grid(row=row, column=1, sticky=tk.W)
 			right.grid(row=row, column=2, sticky=tk.W, padx=2)
 		else:
-			label.grid(row=row, column=0, sticky=tk.E, padx=2)
+			label.grid(row=row, column=0, sticky=tk.E, padx=2, pady=1)
 			central.grid(row=row, column=1, columnspan=2, sticky=tk.W)
 
 	def __init__(self, parent, ups, title):
@@ -448,6 +478,9 @@ class UpsInfoWidget(TkCustomWidget):
 		self.title = title
 		self.timer = None
 		self.valid = True
+		
+		global interval
+		self.interval = interval
 
 		self.outer = TkFrame(parent, padx=5, pady=5)
 		self.frame = TkLabelFrame(self.outer, padx=5, pady=3)
@@ -459,7 +492,7 @@ class UpsInfoWidget(TkCustomWidget):
 		#self.server_str = TkLabel(frame, justify=tk.LEFT)
 		#self._addrow("UPS:", self.server_str)
 
-		self.status_str = TkLabel(self.frame, justify=tk.LEFT)
+		self.status_str = TkLabel(self.frame, justify=tk.LEFT, wraplength=120+4*10)
 		self._addrow("Status:", self.status_str)
 
 		self.batt_bar = TkProgressBar(self.frame, length=120)
@@ -526,8 +559,9 @@ class UpsInfoWidget(TkCustomWidget):
 			runeta = round(runeta / 600) * 600		# 10 min. precision
 		realpower = nutgetpower(vars)
 		realpower = round(realpower / 10) * 10	# 10 W precision
+		strstatus = nutstrstatus(vars)
 
-		self.status_str.config(state=tk.NORMAL, text=nutstrstatus(vars["ups.status"]))
+		self.status_str.config(state=tk.NORMAL, text=strstatus)
 		self.batt_bar.config(value=int(batt))
 		self.batt_str.config(state=tk.NORMAL, text="%.0f%%" % batt)
 		self.load_bar.config(value=int(load))
@@ -537,12 +571,16 @@ class UpsInfoWidget(TkCustomWidget):
 
 	def updatetimer(self):
 		self.updateonce()
-		self.timer = root.after(interval, self.updatetimer)
+		self.timer = root.after(self.interval, self.updatetimer)
 
 	def updatethread(self):
+		# XXX: This needs some kind of locking so that if one thread takes
+		# more than <interval> to do its thing, we don't end up with two
+		# threads being spawned concurrently.
+		# if self.thread: self.thread.join()
 		self.thread = threading.Thread(target=self.updateonce)
 		self.thread.start()
-		self.timer = root.after(interval, self.updatethread)
+		self.timer = root.after(self.interval, self.updatethread)
 
 # Load configured hosts
 
@@ -561,6 +599,12 @@ root = tk.Tk()
 root.title("UPS status")
 
 if ttk:
+	if ttkstyle:
+		ttk.Style().theme_use(ttkstyle)
+
+	if fontsize != 12:
+		ttk.Style().configure(".", font=("TkDefaultFont", -fontsize))
+
 	# It seems that Ttk has magic for determining the correct family and
 	# size of 'TkDefaultFont', such that any change (e.g. weight=BOLD)
 	# will break it and no size value is right. Fortunately, we kind of
@@ -568,10 +612,7 @@ if ttk:
 	#deffont = tkfont.nametofont("TkDefaultFont")
 	#boldfont = deffont.copy()
 	#boldfont.configure(weight=tkfont.BOLD)
-	ttk.Style().configure("TLabelframe.Label", font=("TkDefaultFont", -12, tkfont.BOLD))
-
-if ttk and ttkstyle:
-	ttk.Style().theme_use(ttkstyle)
+	ttk.Style().configure("TLabelframe.Label", font=("TkDefaultFont", -fontsize, "bold"))
 
 # Show main window
 
