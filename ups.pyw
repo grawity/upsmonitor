@@ -1,4 +1,3 @@
-#!/usr/bin/env -S python
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
 from __future__ import print_function
 from __future__ import with_statement
@@ -56,7 +55,7 @@ if sys.platform in ("linux2", "linux"):
 	ttkprogressbar = False
 
 def loadservers(path):
-	# .ups.conf contains a list of UPS addreses, one 'ups@host' per line, with
+	# .upslist.conf contains a list of UPS addreses, one 'ups@host' per line, with
 	# optional description after the address. An address with only '@host' means
 	# an apcupsd server instead of a NUT server.
 	servers = []
@@ -584,9 +583,9 @@ class UpsInfoWidget(TkCustomWidget):
 
 # Load configured hosts
 
-confpaths = [os.path.join(sys.path[0], ".ups.conf"),
-             os.path.expanduser("~/.ups.conf"),
-             os.path.expanduser("~/.config/ups.conf")]
+confpaths = [os.path.join(sys.path[0], ".upslist.conf"),
+             os.path.expanduser("~/.upslist.conf"),
+             os.path.expanduser("~/.config/upslist.conf")]
 if len(sys.argv) > 1:
 	servers = [(a, None) for a in sys.argv[1:]]
 else:
@@ -619,7 +618,7 @@ if ttk:
 saveservers = False
 if not servers:
 	answer = askstring("upsmonitor",
-	                   "No devices found in .ups.conf\n\nUPS address (name@host):")
+	                   "No devices found in .upslist.conf\n\nUPS address (name@host):")
 	if answer:
 		servers.append((answer, None))
 		saveservers = True
@@ -641,6 +640,6 @@ for addr, desc in servers:
 
 if saveservers:
 	writeservers(confpaths[0], servers)
-	showinfo("upsmonitor", "Address stored in .ups.conf")
+	showinfo("upsmonitor", "Address stored in .upslist.conf")
 
 root.mainloop()
