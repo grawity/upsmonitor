@@ -115,24 +115,35 @@ def nutstrstatus(vars):
 		"FSD":		"forced shutdown",
 	}
 	strs = []
-	if alarm:
-		if alarm == "BOOST":
-			pass
-		else:
-			strs.append("alarm [%s]" % alarm)
-	for w in status.split():
-		st = long.get(w, w)
-		if w == "OL" and status != "OL":
+	flags = status.split()
+	
+	skipol = False
+	for w in flags:
+		if w in ("BOOST", "TRIM"):
 			# boost/trim already imply 'on line' (sort of)
+			skipol = True
+		elif w not in ("OL", "OB"):
+			# shorten when used in combination
+			long["OL"] = "on line"
+			
+	for w in flags:
+		st = long.get(w, w)
+		if w == "OL" and skipol:
 			continue
 		if w == "ALARM" and alarm:
 			continue
-		if w == "BOOST" or w == "TRIM":
+		if w in ("BOOST", "TRIM"):
 			# safe to assume that a UPS that reports boost/trim will also
 			# report input voltage; even the relatively dumb APC Back-UPS
 			# (which is not even line-interactive) reports it.
 			st += " (input %.1fV)" % float(vars["input.voltage"])
 		strs.append(st)
+	if alarm:
+		pass
+		#if alarm == "BOOST":
+		#	pass
+		#else:
+		#	strs.append("alarm [%s]" % alarm)
 	return "; ".join(strs) #.capitalize()
 
 def nutgetpower(vars):
@@ -413,7 +424,9 @@ if ttk:
 			cnf = cnfpadding(cnf)
 			ttk.LabelFrame.__init__(self, parent, **cnf)
 
-	TkLabel = ttk.Label
+	class TkLabel(ttk.Label):
+		def configstyle(self, fg="", bold=False):
+			self.config(foreground=fg)
 else:
 	class TkLabelFrame(tk.LabelFrame):
 		def __init__(self, parent=None, cnf={}, **kw):
@@ -425,7 +438,10 @@ else:
 			    self["font"] = "%s bold" % self["font"]
 
 	TkFrame = tk.Frame
-	TkLabel = tk.Label
+	
+	class TkLabel(tk.Label):
+		def configstyle(self, fg="", bold=False):
+			self.config(fg=fg)
 
 if ttk and ttkprogressbar:
 	TkProgressBar = ttk.Progressbar
@@ -558,6 +574,7 @@ class UpsInfoWidget(TkCustomWidget):
 			runeta = round(runeta / 600) * 600		# 10 min. precision
 		realpower = nutgetpower(vars)
 		realpower = round(realpower / 10) * 10	# 10 W precision
+		status = vars["ups.status"].split()
 		strstatus = nutstrstatus(vars)
 
 		self.status_str.config(state=tk.NORMAL, text=strstatus)
@@ -567,6 +584,13 @@ class UpsInfoWidget(TkCustomWidget):
 		self.load_str.config(state=tk.NORMAL, text="%.0f%%" % load)
 		self.runeta_str.config(state=tk.NORMAL, text="approx. %s" % hms(int(runeta)))
 		self.power_str.config(state=tk.NORMAL, text="approx. %dW" % realpower)
+
+		if "ALARM" in status:
+			self.status_str.configstyle(fg="#d00000", bold=True)
+		elif "OB" in status:
+			self.status_str.configstyle(fg="#d07000", bold=True)
+		else:
+			self.status_str.configstyle(fg="")
 
 	def updatetimer(self):
 		self.updateonce()
