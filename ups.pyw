@@ -4,6 +4,7 @@ from __future__ import with_statement
 
 import math
 import os
+import re
 import shlex
 import socket
 import struct
@@ -98,10 +99,10 @@ def hms(seconds):
 	return "%dh %02dm" % (h, m)
 
 def nutstrstatus(vars):
-	status = vars["ups.status"]
-	alarm = vars.get("ups.alarm")
-	long = {
-		"OL":		"on line power",
+	NUTSTATUS = {
+		"ALARM":	"alarm",
+		#"OL":		"on line power",
+		"OL":		"online",
 		"OB":		"on battery",
 		"LB":		"battery low",
 		"HB":		"battery high",
@@ -114,37 +115,62 @@ def nutstrstatus(vars):
 		"BOOST":	"boosting",
 		"FSD":		"forced shutdown",
 	}
-	strs = []
-	flags = status.split()
-	
-	skipol = False
+
+	flags = vars["ups.status"].split()
+	text = []
+	color = 0	# 3 for red, 2 for orange, 1 for green
+
+	# Skip announcing the 'OL' flag to make the string shorter
+	if "OL" in flags:
+		for w in list(flags):
+			if w in ("BOOST", "TRIM"):
+				# boost/trim already imply 'on line' (sort of)
+				flags.remove("OL")
+			#elif w not in ("OL", "OB"):
+			#	# shorten when used in combination
+			#	NUTSTATUS["OL"] = "online"
+
+	# Replace the generic 'ALARM' string
+	if "ALARM" in flags:
+		alarm = vars["ups.alarm"]
+		# Remove the generic nutdrv_qx_voltronic prefix
+		alarm = re.sub(r"^UPS warnings: ", "", alarm)
+		if alarm in ("BOOST", "TRIM"):
+			# Ignore, completely redundant
+			flags.remove("ALARM")
+		elif alarm == "Warning for Battery replace. Replace battery!":
+			# Ignore, 'RB' already present
+			flags.remove("ALARM")
+		else:
+			NUTSTATUS["ALARM"] = "alarm [%s]" % alarm
+
+	# Convert all remaining flags to text
 	for w in flags:
-		if w in ("BOOST", "TRIM"):
-			# boost/trim already imply 'on line' (sort of)
-			skipol = True
-		elif w not in ("OL", "OB"):
-			# shorten when used in combination
-			long["OL"] = "on line"
-			
-	for w in flags:
-		st = long.get(w, w)
-		if w == "OL" and skipol:
-			continue
-		if w == "ALARM" and alarm:
-			continue
-		if w in ("BOOST", "TRIM"):
-			# safe to assume that a UPS that reports boost/trim will also
-			# report input voltage; even the relatively dumb APC Back-UPS
-			# (which is not even line-interactive) reports it.
-			st += " (input %.1fV)" % float(vars["input.voltage"])
-		strs.append(st)
-	if alarm:
-		pass
-		#if alarm == "BOOST":
-		#	pass
-		#else:
-		#	strs.append("alarm [%s]" % alarm)
-	return "; ".join(strs) #.capitalize()
+		st = NUTSTATUS.get(w, w)
+		if w == "CAL":
+			color = max(color, 1)
+		elif w in ("BOOST", "TRIM"):
+			if vars.get("input.voltage"):
+				st += " (input %.1fV)" % float(vars["input.voltage"])
+			color = max(color, 1)
+		elif w == "OB":
+			# On battery - red/orange/green based on runtime
+			bat = float(vars.get("battery.charge", 50))
+			eta = float(vars.get("battery.runtime", 600))
+			if eta < 15*60:   color = max(color, 3)
+			elif eta < 30*60: color = max(color, 2)
+			else:             color = max(color, 1)
+		elif w == "RB":
+			# Replace Battery - red if under 15 minutes, orange otherwise
+			eta = float(vars.get("battery.runtime", 600))
+			if eta < 15*60: color = max(color, 3)
+			else:           color = max(color, 2)
+		elif w in ("ALARM", "OVER", "FSD"):
+			# Always red
+			color = max(color, 3)
+		text.append(st)
+
+	return (", ".join(text)), color
 
 def nutgetpower(vars):
 	# Get approximate 'real' power usage in W.
@@ -211,9 +237,9 @@ class Ups:
 		# Note: Do not convert gaierror to a fatal error like we do for
 		# "unknown UPS", as it occurs when the system is resuming from sleep.
 		res = socket.getaddrinfo(self.hostname,
-		                         self.PORT,
-		                         socket.AF_UNSPEC,
-		                         socket.SOCK_STREAM)
+								 self.PORT,
+								 socket.AF_UNSPEC,
+								 socket.SOCK_STREAM)
 		for (af, kind, proto, cname, addr) in res:
 			self.sock = socket.socket(af, kind, proto)
 			self.sock.settimeout(2.0)
@@ -435,10 +461,10 @@ else:
 			# while keeping the same face and size. (Latest Tk on Win11 sets
 			# this to "TkDefaultFont".)
 			if self["font"].startswith("{MS Sans Serif} "):
-			    self["font"] = "%s bold" % self["font"]
+				self["font"] = "%s bold" % self["font"]
 
 	TkFrame = tk.Frame
-	
+
 	class TkLabel(tk.Label):
 		def configstyle(self, fg="", bold=False):
 			self.config(fg=fg)
@@ -493,7 +519,8 @@ class UpsInfoWidget(TkCustomWidget):
 		self.title = title
 		self.timer = None
 		self.valid = True
-		
+		self.laststatus = None
+
 		global interval
 		self.interval = interval
 
@@ -529,8 +556,10 @@ class UpsInfoWidget(TkCustomWidget):
 		self.updateclear(text="connecting")
 
 	def softlistvars(self, isretry=False):
-		if not self.valid:
-			return None
+		# Avoid polling if no such UPS is configured.
+		# (Disabled because configuration might change)
+		#if not self.valid:
+		#	return None
 
 		try:
 			return self.ups.listvars()
@@ -541,7 +570,10 @@ class UpsInfoWidget(TkCustomWidget):
 			self.ups.close()
 			if isretry:
 				return None
-			self.updateclear("connection lost")
+			elif self.laststatus:
+				self.updateclear("connection lost (%s)" % self.laststatus)
+			else:
+				self.updateclear("connection failed")
 			return self.softlistvars(isretry=True)
 		except UpsError:
 			e = sys.exc_info()[1]
@@ -575,8 +607,9 @@ class UpsInfoWidget(TkCustomWidget):
 		realpower = nutgetpower(vars)
 		realpower = round(realpower / 10) * 10	# 10 W precision
 		status = vars["ups.status"].split()
-		strstatus = nutstrstatus(vars)
+		strstatus, intstatus = nutstrstatus(vars)
 
+		self.laststatus = strstatus
 		self.status_str.config(state=tk.NORMAL, text=strstatus)
 		self.batt_bar.config(value=int(batt))
 		self.batt_str.config(state=tk.NORMAL, text="%.0f%%" % batt)
@@ -585,12 +618,11 @@ class UpsInfoWidget(TkCustomWidget):
 		self.runeta_str.config(state=tk.NORMAL, text="approx. %s" % hms(int(runeta)))
 		self.power_str.config(state=tk.NORMAL, text="approx. %dW" % realpower)
 
-		if "ALARM" in status:
-			self.status_str.configstyle(fg="#d00000", bold=True)
-		elif "OB" in status:
-			self.status_str.configstyle(fg="#d07000", bold=True)
+		colors = ["", "green", "#d09000", "#d00000"]
+		if intstatus >= 2:
+			self.status_str.configstyle(fg=colors[intstatus], bold=True)
 		else:
-			self.status_str.configstyle(fg="")
+			self.status_str.configstyle(fg=colors[intstatus])
 
 	def updatetimer(self):
 		self.updateonce()
@@ -608,8 +640,8 @@ class UpsInfoWidget(TkCustomWidget):
 # Load configured hosts
 
 confpaths = [os.path.join(sys.path[0], ".upslist.conf"),
-             os.path.expanduser("~/.upslist.conf"),
-             os.path.expanduser("~/.config/upslist.conf")]
+			 os.path.expanduser("~/.upslist.conf"),
+			 os.path.expanduser("~/.config/upslist.conf")]
 if len(sys.argv) > 1:
 	servers = [(a, None) for a in sys.argv[1:]]
 else:
@@ -642,7 +674,7 @@ if ttk:
 saveservers = False
 if not servers:
 	answer = askstring("upsmonitor",
-	                   "No devices found in .upslist.conf\n\nUPS address (name@host):")
+					   "No devices found in .upslist.conf\n\nUPS address (name@host):")
 	if answer:
 		servers.append((answer, None))
 		saveservers = True
