@@ -618,11 +618,11 @@ class UpsInfoWidget(TkCustomWidget):
 		self.runeta_str.config(state=tk.NORMAL, text="approx. %s" % hms(int(runeta)))
 		self.power_str.config(state=tk.NORMAL, text="approx. %dW" % realpower)
 
-		colors = ["", "green", "#d09000", "#d00000"]
-		if intstatus >= 2:
-			self.status_str.configstyle(fg=colors[intstatus], bold=True)
-		else:
-			self.status_str.configstyle(fg=colors[intstatus])
+		#colors = ["", "green", "#d09000", "#d00000"]
+		#if intstatus >= 2:
+		#	self.status_str.configstyle(fg=colors[intstatus], bold=True)
+		#else:
+		#	self.status_str.configstyle(fg=colors[intstatus])
 
 	def updatetimer(self):
 		self.updateonce()
