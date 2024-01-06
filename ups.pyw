@@ -391,6 +391,20 @@ class ApcupsdUps(Ups):
 			"LOADPCT":	"ups.load",
 			"NOMPOWER":	"ups.realpower.nominal",
 		}
+		statusmap = {
+			"CAL":		"CAL",
+			"TRIM":		"TRIM",
+			"BOOST":	"BOOST",
+			"ONLINE":	"OL",
+			"ONBATT":	"OB",
+			"OVERLOAD":	"OVER",
+			"LOWBATT":	"LB",
+			"REPLACEBATT":	"RB",
+			# Others: NOBATT SLAVE SLAVEDOWN COMMLOST SELFTEST
+			# Special case: "SHUTTING DOWN", "NETWORK ERROR", "ERROR"
+			"SHUTTING":	"FSD",
+			"DOWN":		"",
+		}
 		avars = self.getstatus()
 		nvars = {}
 		for akey, aval in avars.items():
@@ -404,10 +418,10 @@ class ApcupsdUps(Ups):
 				aval = aval.split()
 				nval = []
 				for v in aval:
-					if v == "ONLINE":
-						nval.append("OL")
+					if v in statusmap:
+						nval.append(statusmap[v])
 					else:
-						print("ApcUps: unknown STATUS value %r" % v)
+						raise UpsProtocolError("ApcUps: unknown STATUS value %r" % v)
 				nvars["ups.status"] = " ".join(nval) or "UNKNOWN"
 		return nvars
 
