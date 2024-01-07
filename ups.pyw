@@ -55,6 +55,11 @@ if sys.platform in ("linux2", "linux"):
 	#ttkstyle = "classic"
 	ttkprogressbar = False
 
+def configpaths(name):
+	return [os.path.join(sys.path[0], ".%s" % name),
+	        os.path.expanduser("~/.%s" % name),
+	        os.path.expanduser("~/.config/%s" % name)]
+
 def loadservers(path):
 	# .upslist.conf contains a list of UPS addreses, one 'ups@host' per line, with
 	# optional description after the address. An address with only '@host' means
@@ -653,11 +658,9 @@ class UpsInfoWidget(TkCustomWidget):
 
 # Load configured hosts
 
-confpaths = [os.path.join(sys.path[0], ".upslist.conf"),
-			 os.path.expanduser("~/.upslist.conf"),
-			 os.path.expanduser("~/.config/upslist.conf")]
+confpaths = configpaths("upslist.conf")
 if len(sys.argv) > 1:
-	servers = [(a, None) for a in sys.argv[1:]]
+	servers = [(a, a) for a in sys.argv[1:]]
 else:
 	servers = tryloadservers(confpaths)
 interval = 5*1000

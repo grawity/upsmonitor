@@ -2,10 +2,18 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
 from __future__ import print_function
 from __future__ import with_statement
+
+import math
 import os
 import shlex
 import socket
+import struct
 import sys
+
+def configpaths(name):
+	return [os.path.join(sys.path[0], ".%s" % name),
+	        os.path.expanduser("~/.%s" % name),
+	        os.path.expanduser("~/.config/%s" % name)]
 
 def loadservers(path):
 	# .upslist.conf contains a list of UPS addreses, one 'ups@host' per line, with
@@ -32,6 +40,24 @@ def tryloadservers(paths):
 		except (OSError, IOError):
 			pass
 	return []
+
+def hms(seconds):
+	t = seconds;	h = t // 3600
+	t = t % 3600;	m = t // 60
+	t = t % 60;	s = t
+	if h > 0:
+		return "%dh %02dm" % (h, m)
+	else:
+		return "%02dm" % (m,)
+
+def gauge(value, width, max_value=100):
+	assert width >= len("[##]")
+	ceil = lambda x: int(math.ceil(x))
+	floor = lambda x: int(math.floor(x))
+	max_width = width - len("[]")
+	fill_width = max_width * value / max_value
+	bar = "#" * ceil(fill_width) + " " * floor(max_width-fill_width)
+	return "[%s]" % bar
 
 class UpsError(Exception):
 	pass
@@ -245,34 +271,13 @@ class ApcupsdUps(Ups):
 
 # Load configured hosts
 
-confpaths = [os.path.join(sys.path[0], ".upslist.conf"),
-			 os.path.expanduser("~/.upslist.conf"),
-			 os.path.expanduser("~/.config/upslist.conf")]
+confpaths = configpaths("upslist.conf")
 if len(sys.argv) > 1:
 	servers = [(a, None) for a in sys.argv[1:]]
 else:
 	servers = tryloadservers(confpaths)
 
 # Poll all servers
-
-def hms(seconds):
-	t = seconds;	h = t // 3600
-	t = t % 3600;	m = t // 60
-	t = t % 60;	s = t
-	if h > 0:
-		return "%dh %02dm" % (h, m)
-	else:
-		return "%02dm" % (m,)
-
-def gauge(value, width, max_value=100):
-	import math
-	ceil = lambda x: int(math.ceil(x))
-	floor = lambda x: int(math.floor(x))
-	assert width >= len("[##]")
-	max_width = width - len("[]")
-	fill_width = max_width * value / max_value
-	bar = "#" * ceil(fill_width) + " " * floor(max_width - fill_width)
-	return "[%s]" % bar
 
 descr_width = 0
 status_width = 12 # len("*on battery*")
