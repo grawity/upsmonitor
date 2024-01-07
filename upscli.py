@@ -286,7 +286,7 @@ load_width = 2+10
 pct_width = len("100%")
 eta_width = max(len("9h 99m"), len("RUNTIME"))
 
-descr_width = max([len(desc) for addr, desc in servers])
+descr_width = max([len(desc or addr) for addr, desc in servers])
 
 print("%-*s" % (descr_width, "UPS"),
       "%-*s" % (status_width, "STATUS"),
@@ -315,6 +315,10 @@ for addr, desc in servers:
 		exit("error: Invalid UPS address '%s'." % (addr,))
 
 	vars = ups.listvars()
+	# XXX: ups.id is not factored into width calc; that needs a two-pass loop
+	# (gather into a list of rows, then print)
+	#desc = desc or vars.get("ups.id") or addr
+	desc = desc or addr
 	batt_pct = float(vars["battery.charge"])
 	load_pct = float(vars["ups.load"])
 	batt_str = "%.0f%%" % batt_pct
