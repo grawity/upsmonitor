@@ -235,6 +235,9 @@ class ApcupsdUps(Ups):
 			"LOADPCT":	"ups.load",
 			"NOMPOWER":	"ups.realpower.nominal",
 		}
+		strmap = {
+			"UPSNAME":	"ups.id",
+		}
 		statusmap = {
 			"CAL":		"CAL",
 			"TRIM":		"TRIM",
@@ -254,6 +257,8 @@ class ApcupsdUps(Ups):
 		for akey, aval in avars.items():
 			if akey in intmap:
 				nvars[intmap[akey]] = float(aval.split()[0])
+			elif akey in strmap:
+				nvars[strmap[akey]] = aval.strip()
 			elif akey == "TIMELEFT":
 				aval, unit = aval.split()
 				assert unit == "Minutes"

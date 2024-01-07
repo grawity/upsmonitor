@@ -396,6 +396,9 @@ class ApcupsdUps(Ups):
 			"LOADPCT":	"ups.load",
 			"NOMPOWER":	"ups.realpower.nominal",
 		}
+		strmap = {
+			"UPSNAME":	"ups.id",
+		}
 		statusmap = {
 			"CAL":		"CAL",
 			"TRIM":		"TRIM",
@@ -405,29 +408,31 @@ class ApcupsdUps(Ups):
 			"OVERLOAD":	"OVER",
 			"LOWBATT":	"LB",
 			"REPLACEBATT":	"RB",
-			# Others: NOBATT SLAVE SLAVEDOWN COMMLOST SELFTEST
-			# Special case: "SHUTTING DOWN", "NETWORK ERROR", "ERROR"
-			"SHUTTING":	"FSD",
-			"DOWN":		"",
+			# Mappings not yet checked against what NUT would show:
+			"NOBATT":	"NOBATT?",
+			"COMMLOST":	"COMMLOST?",
+			"SELFTEST":	"SELFTEST?",
 		}
 		avars = self.getstatus()
 		nvars = {}
 		for akey, aval in avars.items():
 			if akey in intmap:
 				nvars[intmap[akey]] = float(aval.split()[0])
+			elif akey in strmap:
+				nvars[strmap[akey]] = aval.strip()
 			elif akey == "TIMELEFT":
 				aval, unit = aval.split()
 				assert unit == "Minutes"
 				nvars["battery.runtime"] = float(aval) * 60
 			elif akey == "STATUS":
-				aval = aval.split()
-				nval = []
-				for v in aval:
-					if v in statusmap:
-						nval.append(statusmap[v])
-					else:
-						raise UpsProtocolError("ApcUps: unknown STATUS value %r" % v)
-				nvars["ups.status"] = " ".join(nval) or "UNKNOWN"
+				if aval == "SHUTTING DOWN":
+					nval = ["FSD"]
+				elif aval == "NETWORK ERROR":
+					nval = ["COMMLOST"]
+				else:
+					nval = [statusmap.get(v, "%s?" % v)
+					        for v in aval.split()]
+				nvars["ups.status"] = (" ".join(nval) or "UNKNOWN")
 		return nvars
 
 class TkCustomWidget:
@@ -660,7 +665,7 @@ class UpsInfoWidget(TkCustomWidget):
 
 confpaths = configpaths("upslist.conf")
 if len(sys.argv) > 1:
-	servers = [(a, a) for a in sys.argv[1:]]
+	servers = [(a, None) for a in sys.argv[1:]]
 else:
 	servers = tryloadservers(confpaths)
 interval = 5*1000
