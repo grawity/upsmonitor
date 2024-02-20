@@ -722,7 +722,9 @@ if not servers:
 		servers.append((answer, None))
 		saveservers = True
 
-for addr, desc in servers:
+maxrows = 4
+columns = math.ceil(len(servers) / float(maxrows))
+for i, (addr, desc) in enumerate(servers):
 	if addr.startswith("@"):
 		ups = ApcupsdUps("apcupsd" + addr)
 	elif "@" in addr:
@@ -731,7 +733,7 @@ for addr, desc in servers:
 		showerror("upsmonitor", "Invalid UPS address '%s'." % (addr,))
 		exit()
 	ifr = UpsInfoWidget(root, ups, desc)
-	ifr.pack()
+	ifr.grid(column=i%columns, row=i//columns)
 	if threading:
 		root.after(10, ifr.updatethread)
 	else:
