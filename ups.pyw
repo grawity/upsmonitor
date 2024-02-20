@@ -186,20 +186,24 @@ def nutgetpower(vars):
 	#   VA * pf => W
 	# ups.power is in VA, ups.realpower is in W
 
-	if "ups.realpower.nominal" in vars:
+	if ("ups.realpower.nominal" in vars
+	    and "ups.load" in vars):
 		# apcupsd reports this only (no output current and no factual voltage;
 		# output.voltage always shows inverter voltage even while on bypass)
 		maxpowerW = float(vars["ups.realpower.nominal"])
 		curload = float(vars["ups.load"])
 		realpower = maxpowerW * curload / 100
-	elif "ups.power.nominal" in vars:
+	elif ("ups.power.nominal" in vars
+	      and "ups.load" in vars
+	      and "output.powerfactor" in vars):
 		# Orvaldi reports ups.power and voltage/current
 		# output.voltage * output.current == power.nominal * load * powerfactor
 		maxpowerVA = float(vars["ups.power.nominal"])
 		curload = float(vars["ups.load"])
 		pwrfactor = float(vars["output.powerfactor"])
 		realpower = maxpowerVA * curload / 100 * pwrfactor
-	elif "output.current" in vars and "output.voltage" in vars:
+	elif ("output.current" in vars
+	      and "output.voltage" in vars):
 		# Rank this down because it has low precision (only 0.1V*0.1A, which
 		# at low mains voltage jumps by more than ~20W per 0.1A -- whereas the
 		# power*load measurement is only ~9W per 1%).
@@ -207,7 +211,7 @@ def nutgetpower(vars):
 		outvoltage = float(vars["output.voltage"])
 		realpower = outcurrent * outvoltage
 	else:
-		realpower = 0
+		realpower = None
 	return realpower
 
 def tryclose(file):
@@ -624,12 +628,19 @@ class UpsInfoWidget(TkCustomWidget):
 			return
 
 		batt = float(vars["battery.charge"])
-		load = float(vars["ups.load"])
 		runeta = float(vars["battery.runtime"])
 		if runeta > 3600:
 			runeta = round(runeta / 600) * 600		# 10 min. precision
+
+		if "ups.load" in vars:
+			load = float(vars["ups.load"])
+		else:
+			load = None
+
 		realpower = nutgetpower(vars)
-		realpower = round(realpower / 10) * 10	# 10 W precision
+		if realpower:
+			realpower = round(realpower / 10) * 10	# 10 W precision
+
 		status = vars["ups.status"].split()
 		strstatus, intstatus = nutstrstatus(vars)
 
@@ -637,10 +648,20 @@ class UpsInfoWidget(TkCustomWidget):
 		self.status_str.config(state=tk.NORMAL, text=strstatus)
 		self.batt_bar.config(value=int(batt))
 		self.batt_str.config(state=tk.NORMAL, text="%.0f%%" % batt)
-		self.load_bar.config(value=int(load))
-		self.load_str.config(state=tk.NORMAL, text="%.0f%%" % load)
+
+		if load is not None:
+			self.load_bar.config(value=int(load))
+			self.load_str.config(state=tk.NORMAL, text="%.0f%%" % load)
+		else:
+			self.load_bar.config(value=0)
+			self.load_str.config(state=tk.NORMAL, text="N/A")
+
 		self.runeta_str.config(state=tk.NORMAL, text="approx. %s" % hms(int(runeta)))
-		self.power_str.config(state=tk.NORMAL, text="approx. %dW" % realpower)
+
+		if realpower is not None:
+			self.power_str.config(state=tk.NORMAL, text="approx. %dW" % realpower)
+		else:
+			self.power_str.config(state=tk.NORMAL, text="not available")
 
 		#colors = ["", "green", "#d09000", "#d00000"]
 		#if intstatus >= 2:
