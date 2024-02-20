@@ -55,8 +55,11 @@ def gauge(value, width, max_value=100):
 	ceil = lambda x: int(math.ceil(x))
 	floor = lambda x: int(math.floor(x))
 	max_width = width - len("[]")
-	fill_width = max_width * value / max_value
-	bar = "#" * ceil(fill_width) + " " * floor(max_width-fill_width)
+	if value is None:
+		bar = "-" * max_width
+	else:
+		fill_width = max_width * value / max_value
+		bar = "#" * ceil(fill_width) + " " * floor(max_width-fill_width)
 	return "[%s]" % bar
 
 class UpsError(Exception):
@@ -325,9 +328,9 @@ for addr, desc in servers:
 	#desc = desc or vars.get("ups.id") or addr
 	desc = desc or addr
 	batt_pct = float(vars["battery.charge"])
-	load_pct = float(vars["ups.load"])
+	load_pct = float(vars["ups.load"]) if "ups.load" in vars else None
 	batt_str = "%.0f%%" % batt_pct
-	load_str = "%.0f%%" % load_pct
+	load_str = "%.0f%%" % load_pct if "ups.load" in vars else "n/a"
 	eta_secs = float(vars["battery.runtime"])
 	if eta_secs > 3600:
 		eta_secs = round(eta_secs / 600) * 600		# 10 min. precision
