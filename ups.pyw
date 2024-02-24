@@ -35,17 +35,20 @@ ttkstyle = None
 ttkprogressbar = True
 #ttkprogressbar = False
 fontsize = 12
+maxrows = 5
 
 if sys.platform == "win32":
 	VER_WIN95C  = (4, 0, 67109975)
 	VER_WIN98SE = (4, 10, 67766446)
 	VER_WINXP   = (5, 1, 2600)
 
-	# Threaded updates don't work on Windows 98 (4,1,z) -- the program
-	# seems to completely wedge up at that point.
-	# (Not yet tested: Win2000/ME/NT4)
 	winver = sys.getwindowsversion()
+	if winver[:3] <= VER_WINXP:
+		maxrows = 4
 	if winver[:3] <= VER_WIN98SE:
+		# Threaded updates don't work on Windows 98 (4,1,z) -- the program
+		# seems to completely wedge up at that point.
+		# (Not yet tested: Win2000/ME/NT4)
 		print("disabling threaded updates for Windows %d.%d.%d" % winver[:3])
 		threading = None
 
@@ -695,6 +698,7 @@ interval = 5*1000
 
 root = tk.Tk()
 root.title("UPS status")
+root.resizable(False, False)
 
 if ttk:
 	if ttkstyle:
@@ -722,7 +726,6 @@ if not servers:
 		servers.append((answer, None))
 		saveservers = True
 
-maxrows = 4
 columns = math.ceil(len(servers) / float(maxrows))
 for i, (addr, desc) in enumerate(servers):
 	if addr.startswith("@"):
