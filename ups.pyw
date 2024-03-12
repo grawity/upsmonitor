@@ -1,7 +1,4 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
-from __future__ import print_function
-from __future__ import with_statement
-
 import math
 import os
 import re
@@ -49,7 +46,7 @@ if sys.platform == "win32":
 		# Threaded updates don't work on Windows 98 (4,1,z) -- the program
 		# seems to completely wedge up at that point.
 		# (Not yet tested: Win2000/ME/NT4)
-		print("disabling threaded updates for Windows %d.%d.%d" % winver[:3])
+		xprint("disabling threaded updates for Windows %d.%d.%d" % winver[:3])
 		threading = None
 
 if sys.platform in ("linux2", "linux"):
@@ -57,6 +54,9 @@ if sys.platform in ("linux2", "linux"):
 	# to figure out how to set less-bland colors for the fillbar).
 	#ttkstyle = "classic"
 	ttkprogressbar = False
+
+def xprint(*text):
+	sys.stdout.write(" ".join(map(str, text)) + "\n")
 
 def configpaths(name):
 	return [os.path.join(sys.path[0], ".%s" % name),
@@ -68,17 +68,20 @@ def loadservers(path):
 	# optional description after the address. An address with only '@host' means
 	# an apcupsd server instead of a NUT server.
 	servers = []
-	with open(path, "r") as fh:
-		for line in fh:
-			line = line.rstrip()
-			if not line:
-				continue
-			if line.startswith("#"):
-				continue
-			line = line.split(None, 1)
-			upsaddr = line[0]
-			upsdesc = line[1] if len(line) >= 2 else None
-			servers.append((upsaddr, upsdesc))
+	fh = open(path, "r")
+	for line in fh:
+		line = line.rstrip()
+		if not line:
+			continue
+		if line.startswith("#"):
+			continue
+		line = line.split(None, 1)
+		if len(line) < 2:
+			line.append(None)
+		upsaddr = line[0]
+		upsdesc = line[1]
+		servers.append((upsaddr, upsdesc))
+	fh.close()
 	return servers
 
 def tryloadservers(paths):
@@ -90,12 +93,13 @@ def tryloadservers(paths):
 	return []
 
 def writeservers(path, servers):
-	with open(path, "a") as fh:
-		for addr, desc in servers:
-			if desc:
-				fh.write("%s\t\t%s\n" % (addr, desc))
-			else:
-				fh.write("%s\n" % (addr,))
+	fh = open(path, "a")
+	for addr, desc in servers:
+		if desc:
+			fh.write("%s\t\t%s\n" % (addr, desc))
+		else:
+			fh.write("%s\n" % (addr,))
+	fh.close()
 
 def clamp(x, low, high):
 	return min(max(x, low), high)
@@ -235,7 +239,7 @@ class Ups:
 	FMODE = "rw"
 
 	def __init__(self, address):
-		self.upsname, _, self.hostname = address.rpartition("@")
+		self.upsname, self.hostname = address.rsplit("@", 1)
 		self.hostname = self.hostname or "localhost"
 		self.address = "%s@%s" % (self.upsname, self.hostname)
 		self.sock = None
@@ -245,7 +249,7 @@ class Ups:
 		return "Ups(%r)" % self.address
 
 	def connect(self):
-		print("connecting", self.hostname)
+		xprint("connecting", self.hostname)
 		# Note: Do not convert gaierror to a fatal error like we do for
 		# "unknown UPS", as it occurs when the system is resuming from sleep.
 		res = socket.getaddrinfo(self.hostname,
@@ -597,7 +601,7 @@ class UpsInfoWidget(TkCustomWidget):
 		except (OSError, IOError):
 			e = sys.exc_info()[1]
 			# External errors, usually non-fatal
-			print("error (%r): %r" % (self.ups, e))
+			xprint("error (%r): %r" % (self.ups, e))
 			self.ups.close()
 			if isretry:
 				return None
@@ -609,11 +613,11 @@ class UpsInfoWidget(TkCustomWidget):
 		except UpsError:
 			e = sys.exc_info()[1]
 			# Errors from UPS daemon, usually fatal
-			print("error (%r): %r" % (self.ups, e))
+			xprint("error (%r): %r" % (self.ups, e))
 			self.ups.close()
 			self.valid = False
 			self.updateclear("invalid (%s)" % e.args[0])
-			print("giving up on %r" % self.ups)
+			xprint("giving up on %r" % self.ups)
 			return None
 
 	def updateclear(self, text="not connected"):
@@ -736,7 +740,7 @@ for i, (addr, desc) in enumerate(servers):
 		showerror("upsmonitor", "Invalid UPS address '%s'." % (addr,))
 		exit()
 	ifr = UpsInfoWidget(root, ups, desc)
-	ifr.grid(column=i%columns, row=i//columns)
+	ifr.grid(column=int(i%columns), row=int(i//columns))
 	if threading:
 		root.after(10, ifr.updatethread)
 	else:
