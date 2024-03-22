@@ -343,7 +343,6 @@ class NutUps(Ups):
 		return vars
 
 	def getvar(self, name):
-		self.tryconnect()
 		self.send("GET VAR %s %s" % (self.upsname, name))
 		resp = self.recvone()
 		if resp[0] == "ERR":
