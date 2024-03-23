@@ -24,6 +24,13 @@ else:
 	from tkinter.simpledialog import askstring
 	from tkinter.messagebox import showinfo, showerror
 
+def xprint(*text):
+	# Compat with Python 2.4 on Etch which lacks print_function (as well as
+	# with_statement for that matter). Note: sys.stdout is None on pythonw
+	if not sys.stdout:
+		return
+	sys.stdout.write(" ".join(map(str, text)) + "\n")
+
 #ttk = None
 ttkstyle = None
 #ttkstyle = "classic"
@@ -54,9 +61,6 @@ if sys.platform in ("linux2", "linux"):
 	# to figure out how to set less-bland colors for the fillbar).
 	#ttkstyle = "classic"
 	ttkprogressbar = False
-
-def xprint(*text):
-	sys.stdout.write(" ".join(map(str, text)) + "\n")
 
 def configpaths(name):
 	return [os.path.join(sys.path[0], ".%s" % name),
@@ -249,7 +253,7 @@ class Ups:
 		return "Ups(%r)" % self.address
 
 	def connect(self):
-		xprint("connecting", self.hostname)
+		xprint("connecting to %s" % self.hostname)
 		# Note: Do not convert gaierror to a fatal error like we do for
 		# "unknown UPS", as it occurs when the system is resuming from sleep.
 		res = socket.getaddrinfo(self.hostname,
