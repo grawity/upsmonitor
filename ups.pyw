@@ -616,11 +616,14 @@ class UpsInfoWidget(TkCustomWidget):
 		except UpsError:
 			e = sys.exc_info()[1]
 			# Errors from UPS daemon, usually fatal
-			xprint("error (%r): %r" % (self.ups, e))
-			self.ups.close()
-			self.valid = False
-			self.updateclear("invalid (%s)" % e.args[0])
-			xprint("giving up on %r" % self.ups)
+			if e.args[0] == "DATA-STALE":
+				# Driver stuck, but connection to NUT is okay
+				self.updateclear("driver error: data stale")
+			else:
+				self.updateclear("invalid (%s)" % e.args[0])
+				self.valid = False
+				self.ups.close()
+				xprint("giving up on %r due to %r" % (self.ups, e))
 			return None
 
 	def updateclear(self, text="not connected"):
