@@ -404,40 +404,84 @@ class ApcupsdUps(Ups):
 
 	def listvars(self):
 		intmap = {
+			# 1:1 only - TIMELEFT has special handling
 			"BATTV":	"battery.voltage",
 			"BCHARGE": 	"battery.charge",
+			"HITRANS":	"input.transfer.high",
+			"LINEFREQ":	"input.frequency",
 			"LINEV":	"input.voltage",
 			"LOADPCT":	"ups.load",
+			"LOTRANS":	"input.transfer.low",
+			"MAXLINEV":	"input.voltage.maximum",
+			"MINLINEV":	"input.voltage.minimum",
+			"NOMBATTV":	"battery.voltage.nominal",
 			"NOMPOWER":	"ups.realpower.nominal",
+			"NOMOUTV":	"output.voltage.nominal",
+			"OUTPUTV":	"output.voltage",
+		}
+		timemap = {
+			"DLOWBATT":	"battery.runtime.low", # minutes -> seconds
+			"DSHUTD":	"ups.delay.shutdown", # seconds -> seconds
+			"DWAKE":	"ups.delay.start", # seconds -> seconds
+			"TIMELEFT":	"battery.runtime", # minutes -> seconds
 		}
 		strmap = {
+			"BATTDATE":	"battery.date",
+			"FIRMWARE":	"ups.firmware",
+			"LASTXFER":	"input.transfer.reason", # strings slightly differ but it's fine
+			"MANDATE":	"ups.mfr.date",
+			"MODEL":	"ups.model",
+			"SELFTEST":	"ups.test.result",
+			"SENSE":	"input.sensitivity", # apcupsd reports 'High', nut and real value is 'H'
+			"SERIALNO":	"ups.serial",
 			"UPSNAME":	"ups.id",
 		}
 		statusmap = {
-			"CAL":		"CAL",
-			"TRIM":		"TRIM",
-			"BOOST":	"BOOST",
-			"ONLINE":	"OL",
-			"ONBATT":	"OB",
-			"OVERLOAD":	"OVER",
-			"LOWBATT":	"LB",
+			"CAL":			"CAL",
+			"TRIM":			"TRIM",
+			"BOOST":		"BOOST",
+			"ONLINE":		"OL",
+			"ONBATT":		"OB",
+			"OVERLOAD":		"OVER",
+			"LOWBATT":		"LB",
 			"REPLACEBATT":	"RB",
 			# Mappings not yet checked against what NUT would show:
-			"NOBATT":	"NOBATT?",
-			"COMMLOST":	"COMMLOST?",
-			"SELFTEST":	"SELFTEST?",
+			"NOBATT":		"NOBATT?",
+			"COMMLOST":		"COMMLOST?",
+			"SELFTEST":		"SELFTEST?",
 		}
+		# Remaining unmapped:
+		# ALARMDEL : 5 Seconds
+		# CUMONBATT: 0 Seconds
+		# MAXTIME  : 0 Seconds
+		# MBATTCHG : 5 Percent
+		# MINTIMEL : 3 Minutes
+		# NUMXFERS : 0
+		# REG1     : 0x00
+		# REG2     : 0x00
+		# REG3     : 0x00
+		# RETPCT   : 0.0 Percent -- maybe battery.charge.restart
+		# STATFLAG : 0x05000008
+		# TONBATT  : 0 Seconds
+		# XOFFBATT : N/A
 		avars = self.getstatus()
-		nvars = {}
+		nvars = {"ups.mfr": "APC"}
 		for akey, aval in avars.items():
-			if akey in intmap:
-				nvars[intmap[akey]] = float(aval.split()[0])
-			elif akey in strmap:
+			if akey in strmap:
 				nvars[strmap[akey]] = aval.strip()
-			elif akey == "TIMELEFT":
+			elif akey in intmap:
+				nvars[intmap[akey]] = float(aval.split()[0])
+			elif akey in timemap:
 				aval, unit = aval.split()
-				assert unit == "Minutes"
-				nvars["battery.runtime"] = float(aval) * 60
+				if unit == "Seconds":
+					nvars[timemap[akey]] = float(aval)
+				elif unit == "Minutes":
+					nvars[timemap[akey]] = float(aval) * 60
+				else:
+					raise ValueError("Unknown unit %r in %r" % (unit, akey))
+			elif akey == "STESTI":
+				# apcupsd reports hours (but without unit, so timemap can't handle it)
+				nvars["ups.test.interval"] = float(aval) * 3600
 			elif akey == "STATUS":
 				if aval == "SHUTTING DOWN":
 					nval = ["FSD"]
@@ -447,6 +491,11 @@ class ApcupsdUps(Ups):
 					nval = [statusmap.get(v, "%s?" % v)
 					        for v in aval.split()]
 				nvars["ups.status"] = (" ".join(nval) or "UNKNOWN")
+		# New NUT mirrors some ups.* fields to device.*, mimic that
+		for skey in ["mfr", "model", "serial"]:
+			if "ups.%s" % skey in nvars:
+				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
+		from pprint import pprint; pprint(nvars)
 		return nvars
 
 class TkCustomWidget:
