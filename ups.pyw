@@ -495,7 +495,6 @@ class ApcupsdUps(Ups):
 		for skey in ["mfr", "model", "serial"]:
 			if "ups.%s" % skey in nvars:
 				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
-		from pprint import pprint; pprint(nvars)
 		return nvars
 
 class TkCustomWidget:
