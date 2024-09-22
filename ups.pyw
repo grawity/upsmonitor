@@ -55,6 +55,8 @@ if sys.platform == "win32":
 		# (Not yet tested: Win2000/ME/NT4)
 		xprint("disabling threaded updates for Windows %d.%d.%d" % winver[:3])
 		threading = None
+	#if winver[:3] >= (10, 0, 0):
+	#	maxrows = 6
 
 if sys.platform in ("linux2", "linux"):
 	# All default Ttk themes look kind of bad on X11 (clam is okay but I need
