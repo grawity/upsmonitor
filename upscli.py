@@ -56,7 +56,7 @@ def gauge(value, width, max_value=100):
 	floor = lambda x: int(math.floor(x))
 	max_width = width - len("[]")
 	if value is None:
-		bar = "-" * max_width
+		bar = "n/a".ljust(max_width)
 	else:
 		fill_width = max_width * value / max_value
 		bar = "#" * ceil(fill_width) + " " * floor(max_width-fill_width)
@@ -289,30 +289,31 @@ else:
 
 descr_width = 0
 status_width = 12 # len("*on battery*")
-batt_width = 2+15
+batt_width = 2+10
 load_width = 2+10
 pct_width = len("100%")
 eta_width = max(len("9h 99m"), len("RUNTIME"))
+col_space = " " * 2
 
 descr_width = max([len(desc or addr) for addr, desc in servers])
 
 print("%-*s" % (descr_width, "UPS"),
       "%-*s" % (status_width, "STATUS"),
       "%-*s" % (batt_width, "BATTERY"),
-      #"%*s" % (pct_width, "BAT%"),
+      "%*s" % (pct_width, "BAT%"),
       "%*s" % (eta_width, "RUNTIME"),
       "%-*s" % (load_width, "LOAD"),
       "%*s" % (pct_width, "LOAD"),
-      sep="  ")
+      sep=col_space)
 
 print("-" * descr_width,
       "-" * status_width,
       "-" * batt_width,
-      #"-" * pct_width,
+      "-" * pct_width,
       "-" * eta_width,
       "-" * load_width,
       "-" * pct_width,
-      sep="  ")
+      sep=col_space)
 
 for addr, desc in servers:
 	if addr.startswith("@"):
@@ -322,36 +323,43 @@ for addr, desc in servers:
 	else:
 		exit("error: Invalid UPS address '%s'." % (addr,))
 
-	vars = ups.listvars()
-	# XXX: ups.id is not factored into width calc; that needs a two-pass loop
-	# (gather into a list of rows, then print)
-	#desc = desc or vars.get("ups.id") or addr
-	desc = desc or addr
-	batt_pct = float(vars["battery.charge"])
-	load_pct = float(vars["ups.load"]) if "ups.load" in vars else None
-	batt_str = "%.0f%%" % batt_pct
-	load_str = "%.0f%%" % load_pct if "ups.load" in vars else "n/a"
-	eta_secs = float(vars["battery.runtime"])
-	if eta_secs > 3600:
-		eta_secs = round(eta_secs / 600) * 600		# 10 min. precision
-	eta_str = hms(int(eta_secs))
-
-	status_flags = vars["ups.status"]
-	if status_flags == "OL":
-		status_str = "online"
-	elif status_flags == "OB":
-		status_str = "*on battery*"
+	try:
+		vars = ups.listvars()
+	except (TimeoutError, OSError) as e:
+		batt_pct = None
+		load_pct = None
+		batt_str = "--%"
+		load_str = "--%"
+		eta_str = "---"
+		status_str = "unreachable"
 	else:
-		status_flags = status_flags.split()
-		if "OL" in status_flags:
-			status_flags.remove("OL")
-		status_str = (" ".join(status_flags))
+		# XXX: ups.id is not factored into width calc; that needs a two-pass loop
+		# (gather into a list of rows, then print)
+		#desc = desc or vars.get("ups.id") or addr
+		batt_pct = float(vars["battery.charge"])
+		load_pct = float(vars["ups.load"]) if "ups.load" in vars else None
+		batt_str = "%.0f%%" % batt_pct
+		load_str = "%.0f%%" % load_pct if "ups.load" in vars else "n/a"
+		eta_secs = float(vars["battery.runtime"])
+		if eta_secs > 3600:
+			eta_secs = round(eta_secs / 600) * 600		# 10 min. precision
+		eta_str = hms(int(eta_secs))
+		status_flags = vars["ups.status"]
+		if status_flags == "OL":
+			status_str = "online"
+		elif status_flags == "OB":
+			status_str = "*on battery*"
+		else:
+			status_flags = status_flags.split()
+			if "OL" in status_flags:
+				status_flags.remove("OL")
+			status_str = (" ".join(status_flags))
 
-	print("%-*s" % (descr_width, desc),
+	print("%-*s" % (descr_width, desc or addr),
 	      "%-*s" % (status_width, status_str),
 	      "%-*s" % (batt_width, gauge(batt_pct, batt_width)),
-	      #"%*s" % (pct_width, batt_str),
+	      "%*s" % (pct_width, batt_str),
 	      "%*s" % (eta_width, eta_str),
 	      "%-*s" % (load_width, gauge(load_pct, load_width)),
 	      "%*s" % (pct_width, load_str),
-	      sep="  ")
+	      sep=col_space)
