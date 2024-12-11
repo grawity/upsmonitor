@@ -119,9 +119,10 @@ def hms(seconds):
 def nutstrstatus(vars):
 	NUTSTATUS = {
 		"ALARM":	"alarm",
-		#"OL":		"on line power",
-		"OL":		"online",
+		"OL":		"on line",
 		"OB":		"on battery",
+		"CHRG":		"charging",
+		"DISCHRG":	"discharging",
 		"LB":		"battery low",
 		"HB":		"battery high",
 		"RB":		"replace battery",
@@ -171,7 +172,13 @@ def nutstrstatus(vars):
 			if vars.get("input.voltage"):
 				st += " (input %.1fV)" % float(vars["input.voltage"])
 			color = max(color, 1)
-		elif w == "OB":
+		elif w == "CHRG":
+			# Charging - orange/green based on runtime
+			bat = float(vars.get("battery.charge", 50))
+			eta = float(vars.get("battery.runtime", 600))
+			if eta < 15*60:   color = max(color, 2)
+			else:             color = max(color, 1)
+		elif w in ("OB", "DISCHRG"):
 			# On battery - red/orange/green based on runtime
 			bat = float(vars.get("battery.charge", 50))
 			eta = float(vars.get("battery.runtime", 600))
@@ -726,7 +733,7 @@ class UpsInfoWidget(TkCustomWidget):
 		else:
 			self.power_str.config(state=tk.NORMAL, text="not available")
 
-		#colors = ["", "green", "#d09000", "#d00000"]
+		colors = ["", "darkgreen", "#d09000", "#d00000"]
 		#if intstatus >= 2:
 		#	self.status_str.configstyle(fg=colors[intstatus], bold=True)
 		#else:
