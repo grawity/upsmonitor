@@ -666,7 +666,9 @@ class UpsInfoWidget(TkCustomWidget):
 			if isretry:
 				return None
 			elif self.laststatus:
-				self.updateclear("connection lost (%s)" % self.laststatus)
+				self.updateclear("connection lost (%s)" % self.laststatus,
+								 reset=False)
+				self.valid = False
 			else:
 				self.updateclear("connection failed")
 			return self.softlistvars(isretry=True)
@@ -683,14 +685,20 @@ class UpsInfoWidget(TkCustomWidget):
 				xprint("giving up on %r due to %r" % (self.ups, e))
 			return None
 
-	def updateclear(self, text="not connected"):
+	def updateclear(self, text="not connected", reset=True):
 		self.status_str.config(text=text)
-		self.batt_bar.config(value=0)
-		self.batt_str.config(state=tk.DISABLED, text="???%")
-		self.load_bar.config(value=0)
-		self.load_str.config(state=tk.DISABLED, text="???%")
-		self.runeta_str.config(state=tk.DISABLED, text="--")
-		self.power_str.config(state=tk.DISABLED, text="--")
+		if reset:
+			self.batt_bar.config(value=0)
+			self.load_bar.config(value=0)
+			self.batt_str.config(state=tk.DISABLED, text="???%")
+			self.load_str.config(state=tk.DISABLED, text="???%")
+			self.runeta_str.config(state=tk.DISABLED, text="--")
+			self.power_str.config(state=tk.DISABLED, text="--")
+		else:
+			self.batt_str.config(state=tk.DISABLED)
+			self.load_str.config(state=tk.DISABLED)
+			self.runeta_str.config(state=tk.DISABLED)
+			self.power_str.config(state=tk.DISABLED)
 
 	def updateonce(self):
 		vars = self.softlistvars()
