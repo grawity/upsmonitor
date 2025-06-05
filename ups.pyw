@@ -64,7 +64,19 @@ if sys.platform in ("linux2", "linux"):
 	#ttkstyle = "classic"
 	ttkprogressbar = False
 
+if "UPSMONITOR_TTKSTYLE" in os.environ:
+	ttkstyle = os.environ["UPSMONITOR_TTKSTYLE"]
+if "UPSMONITOR_TTKBAR" in os.environ:
+	ttkprogressbar = bool(int(os.environ["UPSMONITOR_TTKBAR"]))
+if "UPSMONITOR_FONTSIZE" in os.environ:
+	fontsize = int(os.environ["UPSMONITOR_FONTSIZE"])
+if "UPSMONITOR_MAXROWS" in os.environ:
+	maxrows = int(os.environ["UPSMONITOR_MAXROWS"])
+
 def configpaths(name):
+	if "UPSMONITOR_CONFIG" in os.environ:
+		return os.environ["UPSMONITOR_CONFIG"].split(os.pathsep)
+
 	return [os.path.join(sys.path[0], ".%s" % name),
 	        os.path.expanduser("~/.%s" % name),
 	        os.path.expanduser("~/.config/%s" % name)]
