@@ -590,7 +590,8 @@ else:
 			self.bg.columnconfigure(0, minsize=self.width)
 			self.bg.rowconfigure(0, minsize=self.height)
 			self.bg.pack()
-			self.bar = tk.Frame(self.bg, width=0, height=self.height, bg=self.colorforvalue(0))
+			self.bar = tk.Frame(self.bg, width=0, height=self.height,
+						        bg=self.colorforvalue(0))
 			self.bar.grid_propagate(0)
 			self.bar.grid(row=0, column=0, sticky=tk.N+tk.S+tk.W)
 
@@ -622,11 +623,14 @@ class UpsInfoWidget(TkCustomWidget):
 		if not title:
 			title = "%s on %s" % (ups.upsname, ups.hostname)
 
+		self.parent = parent
 		self.ups = ups
 		self.title = title
+		self.thread = None
 		self.timer = None
 		self.valid = True
 		self.laststatus = None
+		self.lastintstatus = -1
 
 		global interval
 		self.interval = interval
@@ -734,7 +738,6 @@ class UpsInfoWidget(TkCustomWidget):
 		status = vars["ups.status"].split()
 		strstatus, intstatus = nutstrstatus(vars)
 
-		self.laststatus = strstatus
 		self.status_str.config(state=tk.NORMAL, text=strstatus)
 		self.batt_bar.config(value=int(batt))
 		self.batt_str.config(state=tk.NORMAL, text="%.0f%%" % batt)
@@ -753,11 +756,22 @@ class UpsInfoWidget(TkCustomWidget):
 		else:
 			self.power_str.config(state=tk.NORMAL, text="not available")
 
-		colors = ["", "darkgreen", "#d09000", "#d00000"]
+		#colors = ["", "darkgreen", "#d09000", "#d00000"]
 		#if intstatus >= 2:
 		#	self.status_str.configstyle(fg=colors[intstatus], bold=True)
 		#else:
 		#	self.status_str.configstyle(fg=colors[intstatus])
+
+		if intstatus >= 2 and intstatus > self.lastintstatus:
+			xprint("alerting about status %d (%s) on %s '%s'" % (intstatus,
+															     strstatus,
+															     self.ups,
+															     self.title))
+			self.outer.bell()
+			self.parent.lift()
+
+		self.laststatus = strstatus
+		self.lastintstatus = intstatus
 
 	def updatetimer(self):
 		self.updateonce()
@@ -768,6 +782,8 @@ class UpsInfoWidget(TkCustomWidget):
 		# more than <interval> to do its thing, we don't end up with two
 		# threads being spawned concurrently.
 		# if self.thread: self.thread.join()
+		if self.thread:
+			xprint("XXX: found existing thread %r for %r" % (self.thread, self.ups))
 		self.thread = threading.Thread(target=self.updateonce)
 		self.thread.start()
 		self.timer = root.after(self.interval, self.updatethread)
