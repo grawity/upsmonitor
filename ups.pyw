@@ -1,5 +1,6 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
 import math
+import optparse
 import os
 import re
 import shlex
@@ -31,13 +32,13 @@ def xprint(*text):
 		return
 	sys.stdout.write(" ".join(map(str, text)) + "\n")
 
-#ttk = None
+confpaths = []
+interval = 5
 ttkstyle = None
 #ttkstyle = "classic"
 #ttkstyle = "clam"
 #ttkstyle = "default"
 ttkprogressbar = True
-#ttkprogressbar = False
 fontsize = 12
 maxrows = 5
 
@@ -64,6 +65,10 @@ if sys.platform in ("linux2", "linux"):
 	#ttkstyle = "classic"
 	ttkprogressbar = False
 
+if "UPSMONITOR_CONFIG" in os.environ:
+	confpaths = os.environ["UPSMONITOR_CONFIG"].split(os.pathsep)
+if "UPSMONITOR_INTERVAL" in os.environ:
+	interval = int(os.environ["UPSMONITOR_INTERVAL"])
 if "UPSMONITOR_TTKSTYLE" in os.environ:
 	ttkstyle = os.environ["UPSMONITOR_TTKSTYLE"]
 if "UPSMONITOR_TTKBAR" in os.environ:
@@ -73,10 +78,30 @@ if "UPSMONITOR_FONTSIZE" in os.environ:
 if "UPSMONITOR_MAXROWS" in os.environ:
 	maxrows = int(os.environ["UPSMONITOR_MAXROWS"])
 
-def configpaths(name):
-	if "UPSMONITOR_CONFIG" in os.environ:
-		return os.environ["UPSMONITOR_CONFIG"].split(os.pathsep)
+parser = optparse.OptionParser()
+parser.add_option("-c", "--config", help="alternate path to upslist.conf")
+parser.add_option("-t", "--interval", type=int, help="refresh interval in seconds")
+parser.add_option("-S", "--ttkstyle", help="Ttk theme (classic, clam, default, off)")
+parser.add_option("--ttkbar", action="store_true", help="force use of Ttk progress bar widget")
+parser.add_option("--no-ttkbar", action="store_false", dest="ttkbar",
+                    help="use custom progress widget even if Ttk is available")
+parser.add_option("-z", "--fontsize", type=int, help="UI font size in px (Ttk only)")
+parser.add_option("-m", "--maxrows", type=int, help="override number of rows per column")
+opts, args = parser.parse_args()
 
+if opts.config is not None:     confpaths = opts.config.split(os.pathsep)
+if opts.interval is not None:   interval = int(opts.interval)
+if opts.ttkstyle is not None:   ttkstyle = opts.ttkstyle
+if opts.ttkbar is not None:     ttkprogressbar = opts.ttkbar
+if opts.fontsize is not None:   fontsize = int(opts.fontsize)
+if opts.maxrows is not None:    maxrows = int(opts.maxrows)
+
+if ttkstyle == "off":
+	xprint("disabling ttk")
+	ttk = None
+	ttkstyle = None
+
+def configpaths(name):
 	return [os.path.join(sys.path[0], ".%s" % name),
 	        os.path.expanduser("~/.%s" % name),
 	        os.path.expanduser("~/.config/%s" % name)]
@@ -106,8 +131,12 @@ def tryloadservers(paths):
 	for path in paths:
 		try:
 			return loadservers(path)
-		except (OSError, IOError):
-			pass
+		except OSError:
+			e = sys.exc_info()[1]
+			xprint("could not load %r: %r" % (path, e))
+		except IOError:
+			e = sys.exc_info()[1]
+			xprint("could not load %r: %r" % (path, e))
 	return []
 
 def writeservers(path, servers):
@@ -330,7 +359,7 @@ class NutUps(Ups):
 		try:
 			words = self.tokenize(line)
 		except ValueError:
-			e = sys.exc_info(1)
+			e = sys.exc_info()[1]
 			raise UpsProtocolError("Tokenize error - %s: %r" % (e, line))
 		return words
 
@@ -633,7 +662,7 @@ class UpsInfoWidget(TkCustomWidget):
 		self.lastintstatus = -1
 
 		global interval
-		self.interval = interval
+		self.interval = clamp(interval, 1, 30) * 1000
 
 		self.outer = TkFrame(parent, padx=5, pady=5)
 		self.frame = TkLabelFrame(self.outer, padx=5, pady=3)
@@ -778,24 +807,22 @@ class UpsInfoWidget(TkCustomWidget):
 		self.timer = root.after(self.interval, self.updatetimer)
 
 	def updatethread(self):
-		# XXX: This needs some kind of locking so that if one thread takes
-		# more than <interval> to do its thing, we don't end up with two
-		# threads being spawned concurrently.
-		# if self.thread: self.thread.join()
-		if self.thread:
-			xprint("XXX: found existing thread %r for %r" % (self.thread, self.ups))
-		self.thread = threading.Thread(target=self.updateonce)
-		self.thread.start()
+		if self.thread and self.thread.is_alive():
+			xprint("BUG: found alive thread %r for %r" % (self.thread, self.ups))
+		else:
+			self.thread = threading.Thread(target=self.updateonce)
+			self.thread.start()
 		self.timer = root.after(self.interval, self.updatethread)
 
 # Load configured hosts
 
-confpaths = configpaths("upslist.conf")
-if len(sys.argv) > 1:
-	servers = [(a, None) for a in sys.argv[1:]]
+if not confpaths:
+	confpaths = configpaths("upslist.conf")
+
+if args:
+	servers = [(a, None) for a in args]
 else:
 	servers = tryloadservers(confpaths)
-interval = 5*1000
 
 # Initialize Tk
 
@@ -818,16 +845,27 @@ if ttk:
 	#boldfont = deffont.copy()
 	#boldfont.configure(weight=tkfont.BOLD)
 	ttk.Style().configure("TLabelframe.Label", font=("TkDefaultFont", -fontsize, "bold"))
+else:
+	if ttkstyle:
+		xprint("ttk is not available, ttkstyle configuration will have no effect")
+
+	if fontsize != 12:
+		xprint("ttk is not available, fontsize configuration will have no effect")
 
 # Show main window
 
 saveservers = False
 if not servers:
+	root.withdraw() # on Win98 the main window covers up askstring() dialogs
 	answer = askstring("upsmonitor",
 					   "No devices found in .upslist.conf\n\nUPS address (name@host):")
 	if answer:
 		servers.append((answer, None))
 		saveservers = True
+	else:
+		showerror("upsmonitor", "No hosts to monitor.")
+		exit(1)
+	root.deiconify()
 
 columns = math.ceil(len(servers) / float(maxrows))
 for i, (addr, desc) in enumerate(servers):
@@ -837,7 +875,7 @@ for i, (addr, desc) in enumerate(servers):
 		ups = NutUps(addr)
 	else:
 		showerror("upsmonitor", "Invalid UPS address '%s'." % (addr,))
-		exit()
+		exit(1)
 	ifr = UpsInfoWidget(root, ups, desc)
 	ifr.grid(column=int(i%columns), row=int(i//columns))
 	if threading:
