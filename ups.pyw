@@ -82,9 +82,7 @@ parser = optparse.OptionParser()
 parser.add_option("-c", "--config", help="alternate path to upslist.conf")
 parser.add_option("-t", "--interval", type=int, help="refresh interval in seconds")
 parser.add_option("-S", "--ttkstyle", help="Ttk theme (classic, clam, default, off)")
-parser.add_option("--ttkbar", action="store_true", help="force use of Ttk progress bar widget")
-parser.add_option("--no-ttkbar", action="store_false", dest="ttkbar",
-                    help="use custom progress widget even if Ttk is available")
+parser.add_option("-B", "--ttkbar", type=int, help="use Ttk progress bar widget")
 parser.add_option("-z", "--fontsize", type=int, help="UI font size in px (Ttk only)")
 parser.add_option("-m", "--maxrows", type=int, help="override number of rows per column")
 opts, args = parser.parse_args()
@@ -92,7 +90,7 @@ opts, args = parser.parse_args()
 if opts.config is not None:     confpaths = opts.config.split(os.pathsep)
 if opts.interval is not None:   interval = int(opts.interval)
 if opts.ttkstyle is not None:   ttkstyle = opts.ttkstyle
-if opts.ttkbar is not None:     ttkprogressbar = opts.ttkbar
+if opts.ttkbar is not None:     ttkprogressbar = bool(int(opts.ttkbar))
 if opts.fontsize is not None:   fontsize = int(opts.fontsize)
 if opts.maxrows is not None:    maxrows = int(opts.maxrows)
 
