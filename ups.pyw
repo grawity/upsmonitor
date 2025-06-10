@@ -783,13 +783,13 @@ class UpsInfoWidget(TkCustomWidget):
 		else:
 			self.power_str.config(state=tk.NORMAL, text="not available")
 
-		#colors = ["", "darkgreen", "#d09000", "#d00000"]
-		#if intstatus >= 2:
-		#	self.status_str.configstyle(fg=colors[intstatus], bold=True)
-		#else:
-		#	self.status_str.configstyle(fg=colors[intstatus])
+		colors = ["black", "#008800", "#d09000", "#d00000"]
+		if intstatus >= 1:
+			self.status_str.configstyle(fg=colors[intstatus], bold=True)
+		else:
+			self.status_str.configstyle(fg=colors[intstatus])
 
-		if intstatus >= 2 and intstatus > self.lastintstatus:
+		if intstatus >= 1 and intstatus > self.lastintstatus:
 			xprint("alerting about status %d (%s) on %s '%s'" % (intstatus,
 															     strstatus,
 															     self.ups,
