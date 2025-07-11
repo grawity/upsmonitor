@@ -286,7 +286,11 @@ class UpsError(Exception):
 class UpsProtocolError(IOError):
 	pass
 
-class Ups:
+class UpsBase:
+	def listvars(self):
+		raise NotImplementedError
+
+class TcpSocketUpsBase(UpsBase):
 	PORT = 0
 	FMODE = "rw"
 
@@ -298,7 +302,7 @@ class Ups:
 		self.stream = None
 
 	def __repr__(self):
-		return "Ups(%r)" % self.address
+		return "%s(%r)" % (self.__class__.__name__, self.address)
 
 	def connect(self):
 		xprint("connecting to %s" % self.hostname)
@@ -323,11 +327,8 @@ class Ups:
 		self.stream = tryclose(self.stream)
 		self.sock = tryclose(self.sock)
 
-class NutUps(Ups):
+class NutUps(TcpSocketUpsBase):
 	PORT = 3493
-
-	def __repr__(self):
-		return "NutUps(%r)" % self.address
 
 	def send(self, line):
 		self.tryconnect()
@@ -411,12 +412,9 @@ class NutUps(Ups):
 		else:
 			raise UpsProtocolError("Unexpected: %r" % (resp,))
 
-class ApcupsdUps(Ups):
+class ApcupsdUps(TcpSocketUpsBase):
 	PORT = 3551
 	FMODE = "rwb"
-
-	def __repr__(self):
-		return "ApcupsdUps(%r)" % self.address
 
 	def send(self, command):
 		self.tryconnect()
@@ -544,6 +542,110 @@ class ApcupsdUps(Ups):
 			if "ups.%s" % skey in nvars:
 				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
 		return nvars
+
+class MikrotikUps(TcpSocketUpsBase):
+	PORT = 80
+	FMODE = "rwb"
+
+	def __init__(self, address):
+		try:
+			import urllib.parse as urlparse
+		except ImportError:
+			import urlparse
+
+		self.upsname, url = address.split("@", 1)
+		res = urlparse.urlsplit(url)
+		self.hostname = res.hostname
+		TcpSocketUpsBase.__init__(self, "%s@%s" % (self.upsname, self.hostname))
+
+		import base64
+		import json
+		username = urlparse.unquote(res.username or "upsmon").encode()
+		password = urlparse.unquote(res.password or "upsmon").encode()
+		nameenc = urlparse.quote(self.upsname).encode()
+		authenc = base64.b64encode(username + b":" + password)
+		self.reqheaders  = b"Host: %s\r\n" % self.hostname.encode()
+		self.reqheaders += b"Authorization: Basic %s\r\n" % authenc
+		self.reqheaders += b"Accept: application/json\r\n"
+		self.reqheaders += b"Connection: close\r\n"
+
+		# 'print' request
+		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.1\r\n" % nameenc
+		self.requestbuf += self.reqheaders
+		self.requestbuf += b"\r\n"
+		xprint("XXX ---")
+		xprint(self.requestbuf.decode())
+		xprint("XXX ---")
+
+		# 'monitor once' request
+		monitorbody = json.dumps({"numbers": self.upsname, "once": ""}).encode()
+		self.monitorbuf = b"POST /rest/system/ups/monitor HTTP/1.1\r\n"
+		self.monitorbuf += self.reqheaders
+		self.monitorbuf += b"Content-Type: application/json\r\n"
+		self.monitorbuf += b"Content-Length: %d\r\n" % len(monitorbody)
+		self.monitorbuf += b"\r\n"
+		self.monitorbuf += monitorbody
+		xprint("XXX ---")
+		xprint(self.monitorbuf.decode())
+		xprint("XXX ---")
+
+	def dohttprequest(self, requestbuf):
+		import json
+
+		self.connect()
+		self.stream.write(requestbuf)
+		self.stream.flush()
+		status = self.stream.readline()
+		resp = self.stream.read(1*1024*1024)
+		self.close()
+
+		xprint("XXX got resp = %r" % (resp,))
+		headers, body = resp.split(b"\r\n\r\n")
+		headers = headers.split(b"\r\n")
+		#status = headers.pop(0)
+		xprint("XXX status = %r" % (status,))
+		xprint("XXX headers = %r" % (headers,))
+		xprint("XXX body = %r" % (body,))
+		sproto, scode, *srest = status.split(b" ")
+		if sproto[:7] != b"HTTP/1.":
+			raise UpsProtocolError("bad response status header %r" % (status,))
+		if scode == b"200":
+			if b"Content-Type: application/json" not in headers:
+				raise UpsProtocolError("wrong HTTP content type: %r" % (headers,))
+			return json.loads(body)
+		elif scode == b"400":
+			if b"Content-Type: application/json" not in headers:
+				raise UpsProtocolError("HTTP request failed with %r" % (body,))
+			data = json.loads(body)
+			raise UpsError("HTTP request failed with %r" % (data["detail"]))
+		else:
+			raise UpsProtocolError("HTTP request failed with %r" % (status,))
+	
+	def listvars(self):
+		data = self.dohttprequest(self.requestbuf)
+		xprint("XXX data before grep = %r" % (data,))
+		data = [x for x in data if data.get("name") == self.upsname]
+		xprint("XXX data after grep = %r" % (data,))
+		if not data:
+			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
+		vars = {}
+		vars["ups.id"] = data["name"]
+		vars["ups.load"] = data["load"]
+		vars["ups.model"] = data["model"]
+		vars["ups.serial"] = data["serial"]
+		vars["ups.firmware"] = data["version"]
+		vars["ups.mfr.date"] = data["manufacture-date"]
+		vars["battery.voltage.nominal"] = data["nominal-battery-voltage"]
+		# XXX: ups.status from flags?
+		# XXX: actually -- we need to do both 'print' and 'monitor' to get full data
+		#
+		# not sure if monitor includes load - if it does, then print can be
+		# done just once upon connect and its vars cached?
+		#
+		return vars
+	
+	#def close(self):
+	#	pass
 
 class TkCustomWidget:
 	def config(self, **kv):
@@ -695,9 +797,12 @@ class UpsInfoWidget(TkCustomWidget):
 
 	def softlistvars(self, isretry=False):
 		# Avoid polling if no such UPS is configured.
-		# (Disabled because configuration might change)
-		#if not self.valid:
-		#	return None
+		if not self.valid:
+			# (XXX: Disabled because configuration might change)
+			#xprint("UPS was given up, but trying again anyway")
+			#self.valid = True
+			# (XXX: Re-enabled because I got confused why 'giving up' does not give up)
+			return None
 
 		try:
 			return self.ups.listvars()
@@ -869,6 +974,8 @@ columns = math.ceil(len(servers) / float(maxrows))
 for i, (addr, desc) in enumerate(servers):
 	if addr.startswith("@"):
 		ups = ApcupsdUps("apcupsd" + addr)
+	elif "@http://" in addr:
+		ups = MikrotikUps(addr)
 	elif "@" in addr:
 		ups = NutUps(addr)
 	else:
