@@ -620,17 +620,18 @@ class MikrotikUps(TcpSocketUpsBase):
 			raise UpsError("HTTP request failed with %r" % (data["detail"]))
 		else:
 			raise UpsProtocolError("HTTP request failed with %r" % (status,))
-	
+
 	def listvars(self):
+		vars = {}
+
 		data = self.dohttprequest(self.requestbuf)
 		xprint("XXX data before grep = %r" % (data,))
 		data = [x for x in data if data.get("name") == self.upsname]
 		xprint("XXX data after grep = %r" % (data,))
 		if not data:
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
-		vars = {}
 		vars["ups.id"] = data["name"]
-		vars["ups.load"] = data["load"]
+		vars["ups.load"] = data["load"] # xxx this is in monitor
 		vars["ups.model"] = data["model"]
 		vars["ups.serial"] = data["serial"]
 		vars["ups.firmware"] = data["version"]
@@ -642,8 +643,37 @@ class MikrotikUps(TcpSocketUpsBase):
 		# not sure if monitor includes load - if it does, then print can be
 		# done just once upon connect and its vars cached?
 		#
+
+		data = self.dohttprequest(self.monitorbuf)
+		xprint("XXX monitor data = %r" % (data,))
+		"""
+          on-line: no
+       on-battery: yes
+   transfer-cause: "Line voltage notch or spike"
+      RTC-running: no
+     runtime-left: 19m
+    offline-after: 4m46s
+   battery-charge: 94%
+  battery-voltage: 24V			+
+     line-voltage: 0V			+
+   output-voltage: 228V			+
+             load: 42%			+
+      temperature: 39C
+        frequency: 50Hz			+
+  replace-battery: no
+      smart-boost: no
+       smart-trim: no
+         overload: no
+      low-battery: no
+		"""
+		vars["ups.load"] = data["load"]						# remove suffix '%'
+		vars["input.frequency"] = data["frequency"]			# suffix 'Hz'
+		vars["input.voltage"] = data["line-voltage"]		# suffix 'V'
+		vars["output.voltage"] = data["output-voltage"]		# suffix 'V'
+		vars["battery.voltage"] = data["battery-voltage"]	# suffix 'V'
+
 		return vars
-	
+
 	#def close(self):
 	#	pass
 
