@@ -449,38 +449,38 @@ class ApcupsdUps(TcpSocketUpsBase):
 		return vars
 
 	def listvars(self):
-		intmap = {
+		floatmap = {
 			# 1:1 only - TIMELEFT has special handling
-			"BATTV":	"battery.voltage",
-			"BCHARGE": 	"battery.charge",
-			"HITRANS":	"input.transfer.high",
-			"LINEFREQ":	"input.frequency",
-			"LINEV":	"input.voltage",
-			"LOADPCT":	"ups.load",
-			"LOTRANS":	"input.transfer.low",
-			"MAXLINEV":	"input.voltage.maximum",
-			"MINLINEV":	"input.voltage.minimum",
-			"NOMBATTV":	"battery.voltage.nominal",
-			"NOMPOWER":	"ups.realpower.nominal",
-			"NOMOUTV":	"output.voltage.nominal",
-			"OUTPUTV":	"output.voltage",
+			"BATTV":		"battery.voltage",
+			"BCHARGE": 		"battery.charge",
+			"HITRANS":		"input.transfer.high",
+			"LINEFREQ":		"input.frequency",
+			"LINEV":		"input.voltage",
+			"LOADPCT":		"ups.load",
+			"LOTRANS":		"input.transfer.low",
+			"MAXLINEV":		"input.voltage.maximum",
+			"MINLINEV":		"input.voltage.minimum",
+			"NOMBATTV":		"battery.voltage.nominal",
+			"NOMPOWER":		"ups.realpower.nominal",
+			"NOMOUTV":		"output.voltage.nominal",
+			"OUTPUTV":		"output.voltage",
 		}
 		timemap = {
-			"DLOWBATT":	"battery.runtime.low", # minutes -> seconds
-			"DSHUTD":	"ups.delay.shutdown", # seconds -> seconds
-			"DWAKE":	"ups.delay.start", # seconds -> seconds
-			"TIMELEFT":	"battery.runtime", # minutes -> seconds
+			"DLOWBATT":		"battery.runtime.low", # minutes -> seconds
+			"DSHUTD":		"ups.delay.shutdown", # seconds -> seconds
+			"DWAKE":		"ups.delay.start", # seconds -> seconds
+			"TIMELEFT":		"battery.runtime", # minutes -> seconds
 		}
 		strmap = {
-			"BATTDATE":	"battery.date",
-			"FIRMWARE":	"ups.firmware",
-			"LASTXFER":	"input.transfer.reason", # strings slightly differ but it's fine
-			"MANDATE":	"ups.mfr.date",
-			"MODEL":	"ups.model",
-			"SELFTEST":	"ups.test.result",
-			"SENSE":	"input.sensitivity", # apcupsd reports 'High', nut and real value is 'H'
-			"SERIALNO":	"ups.serial",
-			"UPSNAME":	"ups.id",
+			"BATTDATE":		"battery.date",
+			"FIRMWARE":		"ups.firmware",
+			"LASTXFER":		"input.transfer.reason", # strings slightly differ but it's fine
+			"MANDATE":		"ups.mfr.date",
+			"MODEL":		"ups.model",
+			"SELFTEST":		"ups.test.result",
+			"SENSE":		"input.sensitivity", # apcupsd reports 'High', nut and real value is 'H'
+			"SERIALNO":		"ups.serial",
+			"UPSNAME":		"ups.id",
 		}
 		statusmap = {
 			"CAL":			"CAL",
@@ -618,11 +618,13 @@ class MikrotikUps(TcpSocketUpsBase):
 				raise UpsProtocolError("HTTP request failed with %r" % (body,))
 			data = json.loads(body)
 			raise UpsError("HTTP request failed with %r" % (data["detail"]))
+		elif scode == b"401":
+			raise UpsError("login failure")
 		else:
 			raise UpsProtocolError("HTTP request failed with %r" % (status,))
 
 	def listvars(self):
-		vars = {}
+		nvars = {}
 
 		data = self.dohttprequest(self.requestbuf)
 		xprint("XXX data before grep = %r" % (data,))
@@ -630,13 +632,13 @@ class MikrotikUps(TcpSocketUpsBase):
 		xprint("XXX data after grep = %r" % (data,))
 		if not data:
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
-		vars["ups.id"] = data["name"]
-		vars["ups.load"] = data["load"] # xxx this is in monitor
-		vars["ups.model"] = data["model"]
-		vars["ups.serial"] = data["serial"]
-		vars["ups.firmware"] = data["version"]
-		vars["ups.mfr.date"] = data["manufacture-date"]
-		vars["battery.voltage.nominal"] = data["nominal-battery-voltage"]
+		nvars["ups.id"] = data["name"]
+		nvars["ups.load"] = data["load"] # xxx this is in monitor
+		nvars["ups.model"] = data["model"]
+		nvars["ups.serial"] = data["serial"]
+		nvars["ups.firmware"] = data["version"]
+		nvars["ups.mfr.date"] = data["manufacture-date"]
+		nvars["battery.voltage.nominal"] = data["nominal-battery-voltage"]
 		# XXX: ups.status from flags?
 		# XXX: actually -- we need to do both 'print' and 'monitor' to get full data
 		#
@@ -644,35 +646,65 @@ class MikrotikUps(TcpSocketUpsBase):
 		# done just once upon connect and its vars cached?
 		#
 
-		data = self.dohttprequest(self.monitorbuf)
-		xprint("XXX monitor data = %r" % (data,))
-		"""
-          on-line: no
-       on-battery: yes
-   transfer-cause: "Line voltage notch or spike"
-      RTC-running: no
-     runtime-left: 19m
-    offline-after: 4m46s
-   battery-charge: 94%
-  battery-voltage: 24V			+
-     line-voltage: 0V			+
-   output-voltage: 228V			+
-             load: 42%			+
-      temperature: 39C
-        frequency: 50Hz			+
-  replace-battery: no
-      smart-boost: no
-       smart-trim: no
-         overload: no
-      low-battery: no
-		"""
-		vars["ups.load"] = data["load"]						# remove suffix '%'
-		vars["input.frequency"] = data["frequency"]			# suffix 'Hz'
-		vars["input.voltage"] = data["line-voltage"]		# suffix 'V'
-		vars["output.voltage"] = data["output-voltage"]		# suffix 'V'
-		vars["battery.voltage"] = data["battery-voltage"]	# suffix 'V'
+		rosdata = self.dohttprequest(self.monitorbuf)
+		xprint("XXX monitor data = %r" % (rosdata,))
 
-		return vars
+		stringmap = [
+			("transfer-cause",	"input.transfer.reason"),
+		]
+		floatmap = [
+			("battery-voltage",	"V",	"battery.voltage"),
+			("frequency",		"Hz",	"input.frequency"),
+			("line-voltage",	"V",	"input.voltage"),
+			("load",			"%",	"ups.load"),
+			("output-voltage",	"V",	"output.voltage"),
+			("temperature",		"C",	"ups.temperature"),
+			("battery-charge",	"%",	"battery.charge"),
+		]
+		flagmap = [
+			("on-line",			"OL"),
+			("on-battery",		"OB"),
+			("RTC-running",		"CAL"),
+			("replace-battery",	"RB"),
+			("smart-boost",		"BOOST"),
+			("smart-trim",		"TRIM"),
+			("overload",		"OVERLOAD"),
+			("low-battery",		"LB"),
+		]
+		flags = []
+		consumed = set()
+
+		# time format
+		# vars["battery.runtime"] = data["runtime-left"]	# XXX convert format
+		# vars["XXXX.offline-after"] = data["offline-after"]	# XXX convert format, unknown mapping
+		# ^^ maybe translate (runtime-left - offline-after) to battery.runtime.low?
+
+		for mtikkey, nutkey in stringmap:
+			if mtikkey in rosdata:
+				nvars[nutkey] = rosdata[mtikkey]
+				consumed.add(mtikkey)
+		for mtikkey, munit, nutkey in floatmap:
+			if mtikkey in rosdata:
+				mtikval = rosdata[mtikkey]
+				mtikval = removesuffix(mtikval, munit)
+				nvars[nutkey] = mval
+				consumed.add(mtikkey)
+		for mtikkey, nutflag in flagmap:
+			if rosdata.get(mtikkey) == "yes":
+				flags.append(nutflag)
+				consumed.add(mtikkey)
+
+		nvars["ups.status"] = " ".join(flags) or "??UNKNOWN??"
+
+		for roskey, rosval in rosdata.items():
+			if roskey not in consumed:
+				xprint("XXX unconsumed router-os monitor attribute: %r" % roskey)
+
+		# New NUT mirrors some ups.* fields to device.*, mimic that
+		for skey in ["mfr", "model", "serial"]:
+			if "ups.%s" % skey in nvars:
+				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
+		return nvars
 
 	#def close(self):
 	#	pass
