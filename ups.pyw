@@ -515,8 +515,8 @@ class ApcupsdUps(TcpSocketUpsBase):
 		for akey, aval in avars.items():
 			if akey in strmap:
 				nvars[strmap[akey]] = aval.strip()
-			elif akey in intmap:
-				nvars[intmap[akey]] = float(aval.split()[0])
+			elif akey in floatmap:
+				nvars[floatmap[akey]] = float(aval.split()[0])
 			elif akey in timemap:
 				aval, unit = aval.split()
 				if unit == "Seconds":
@@ -526,8 +526,9 @@ class ApcupsdUps(TcpSocketUpsBase):
 				else:
 					raise ValueError("Unknown unit %r in %r" % (unit, akey))
 			elif akey == "STESTI":
-				# apcupsd reports hours (but without unit, so timemap can't handle it)
-				nvars["ups.test.interval"] = float(aval) * 3600
+				if aval != "None":
+					# apcupsd reports hours (but without unit, so timemap can't handle it)
+					nvars["ups.test.interval"] = float(aval) * 3600
 			elif akey == "STATUS":
 				if aval == "SHUTTING DOWN":
 					nval = ["FSD"]
@@ -889,11 +890,19 @@ class UpsInfoWidget(TkCustomWidget):
 				# Driver stuck, but connection to NUT is okay
 				self.updateclear("driver error: data stale")
 			else:
-				self.updateclear("invalid (%s)" % e.args[0])
+				self.updateclear("invalid (%s)" % (e.args[0],))
 				self.valid = False
 				self.ups.close()
 				xprint("giving up on %r due to %r" % (self.ups, e))
 			return None
+		except Exception:
+			e = sys.exc_info()[1]
+			showerror("upsmonitor", "Exception (%r):\n%r" % (self.ups, e))
+			self.updateclear("exception (%s)" % (e.args[0],))
+			self.valid = False
+			self.ups.close()
+			xprint("crashing on %r due to %r" % (self.ups, e))
+			raise
 
 	def updateclear(self, text="not connected", reset=True):
 		self.status_str.config(text=text)
@@ -973,6 +982,7 @@ class UpsInfoWidget(TkCustomWidget):
 
 	def updatethread(self):
 		if self.thread and self.thread.is_alive():
+			# this might be triggered by showerror("Exception")
 			xprint("BUG: found alive thread %r for %r" % (self.thread, self.ups))
 		else:
 			self.thread = threading.Thread(target=self.updateonce)
