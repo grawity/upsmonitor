@@ -155,6 +155,29 @@ def hms(seconds):
 	t = t % 60;	s = t
 	return "%dh %02dm" % (h, m)
 
+def routeros_unhms(string):
+	m = re.match(r"""
+		(?: (?P<w>\d+)w )?
+		(?: (?P<d>\d+)d )?
+		(?: (?P<h>\d+)h )?
+		(?: (?P<m>\d+)m )?
+		(?: (?P<s>\d+)s )?
+	""", string, re.X)
+	if m:
+		secs = 0
+		if m["w"]: secs += int(m["w"])*60*60*24*7
+		if m["d"]: secs += int(m["d"])*60*60*24
+		if m["h"]: secs += int(m["h"])*60*60
+		if m["m"]: secs += int(m["m"])*60
+		if m["s"]: secs += int(m["s"])
+		return secs
+	raise ValueError("could not parse Mikrotik hms string %r" % (string,))
+
+def removesuffix(string, suffix):
+	if len(suffix) and string.endswith(suffix):
+		return string[:-len(suffix)]
+	return string
+
 def nutstrstatus(vars):
 	NUTSTATUS = {
 		"ALARM":	"alarm",
@@ -627,28 +650,37 @@ class MikrotikUps(TcpSocketUpsBase):
 	def listvars(self):
 		nvars = {}
 
-		data = self.dohttprequest(self.requestbuf)
-		xprint("XXX data before grep = %r" % (data,))
-		data = [x for x in data if data.get("name") == self.upsname]
-		xprint("XXX data after grep = %r" % (data,))
-		if not data:
+		# load /print data
+
+		rosdata = self.dohttprequest(self.requestbuf)
+		xprint("XXX data before grep = %r" % (rosdata,))
+		rosdata = [x for x in rosdata if x.get("name") == self.upsname]
+		xprint("XXX data after grep = %r" % (rosdata,))
+		if not rosdata:
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
-		nvars["ups.id"] = data["name"]
-		nvars["ups.load"] = data["load"] # xxx this is in monitor
-		nvars["ups.model"] = data["model"]
-		nvars["ups.serial"] = data["serial"]
-		nvars["ups.firmware"] = data["version"]
-		nvars["ups.mfr.date"] = data["manufacture-date"]
-		nvars["battery.voltage.nominal"] = data["nominal-battery-voltage"]
-		# XXX: ups.status from flags?
-		# XXX: actually -- we need to do both 'print' and 'monitor' to get full data
-		#
-		# not sure if monitor includes load - if it does, then print can be
-		# done just once upon connect and its vars cached?
-		#
+		rosdata = rosdata[0]
+
+		stringmap = [
+			("name",				"ups.id"),
+			("model",				"ups.model"),
+			("serial",				"ups.serial"),
+			("firmware",			"ups.version"),
+			("manufacture-date",	"ups.mfr.date"),
+		]
+		consumed = set()
+		for mtikkey, nutkey in stringmap:
+			if mtikkey in rosdata:
+				nvars[nutkey] = rosdata[mtikkey]
+				consumed.add(mtikkey)
+		for roskey, rosval in rosdata.items():
+			if roskey not in consumed:
+				xprint("XXX unconsumed RouterOS print attribute %r = %r" % (roskey, rosval))
+
+		# load /monitor data
 
 		rosdata = self.dohttprequest(self.monitorbuf)
 		xprint("XXX monitor data = %r" % (rosdata,))
+		rosdata = rosdata[0]
 
 		stringmap = [
 			("transfer-cause",	"input.transfer.reason"),
@@ -662,10 +694,13 @@ class MikrotikUps(TcpSocketUpsBase):
 			("temperature",		"C",	"ups.temperature"),
 			("battery-charge",	"%",	"battery.charge"),
 		]
+		timemap = [
+			("runtime-left",	"battery.runtime"),
+		]
 		flagmap = [
 			("on-line",			"OL"),
 			("on-battery",		"OB"),
-			("RTC-running",		"CAL"),
+			("rtc-running",		"CAL"),
 			("replace-battery",	"RB"),
 			("smart-boost",		"BOOST"),
 			("smart-trim",		"TRIM"),
@@ -674,12 +709,6 @@ class MikrotikUps(TcpSocketUpsBase):
 		]
 		flags = []
 		consumed = set()
-
-		# time format
-		# vars["battery.runtime"] = data["runtime-left"]	# XXX convert format
-		# vars["XXXX.offline-after"] = data["offline-after"]	# XXX convert format, unknown mapping
-		# ^^ maybe translate (runtime-left - offline-after) to battery.runtime.low?
-
 		for mtikkey, nutkey in stringmap:
 			if mtikkey in rosdata:
 				nvars[nutkey] = rosdata[mtikkey]
@@ -688,23 +717,28 @@ class MikrotikUps(TcpSocketUpsBase):
 			if mtikkey in rosdata:
 				mtikval = rosdata[mtikkey]
 				mtikval = removesuffix(mtikval, munit)
-				nvars[nutkey] = mval
+				nvars[nutkey] = mtikval
+				consumed.add(mtikkey)
+		for mtikkey, nutkey in timemap:
+			if mtikkey in rosdata:
+				mtikval = rosdata[mtikkey]
+				nvars[nutkey] = routeros_unhms(mtikval)
 				consumed.add(mtikkey)
 		for mtikkey, nutflag in flagmap:
-			if rosdata.get(mtikkey) == "yes":
-				flags.append(nutflag)
+			if mtikkey in rosdata:
+				if rosdata[mtikkey] == "true":
+					flags.append(nutflag)
 				consumed.add(mtikkey)
-
-		nvars["ups.status"] = " ".join(flags) or "??UNKNOWN??"
-
 		for roskey, rosval in rosdata.items():
 			if roskey not in consumed:
-				xprint("XXX unconsumed router-os monitor attribute: %r" % roskey)
+				xprint("XXX unconsumed RouterOS monitor attribute %r = %r" % (roskey, rosval))
+		nvars["ups.status"] = " ".join(flags) or "??UNKNOWN??"
 
 		# New NUT mirrors some ups.* fields to device.*, mimic that
 		for skey in ["mfr", "model", "serial"]:
 			if "ups.%s" % skey in nvars:
 				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
+
 		return nvars
 
 	#def close(self):
@@ -897,7 +931,7 @@ class UpsInfoWidget(TkCustomWidget):
 			return None
 		except Exception:
 			e = sys.exc_info()[1]
-			showerror("upsmonitor", "Exception (%r):\n%r" % (self.ups, e))
+			#showerror("upsmonitor", "Exception (%r):\n%r" % (self.ups, e))
 			self.updateclear("exception (%s)" % (e.args[0],))
 			self.valid = False
 			self.ups.close()
