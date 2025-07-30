@@ -594,13 +594,13 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.reqheaders += b"Connection: close\r\n"
 
 		# 'print' request
-		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.1\r\n" % nameenc
+		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.0\r\n" % nameenc
 		self.requestbuf += self.reqheaders
 		self.requestbuf += b"\r\n"
 
 		# 'monitor once' request
 		monitorbody = json.dumps({"numbers": self.upsname, "once": ""}).encode()
-		self.monitorbuf = b"POST /rest/system/ups/monitor HTTP/1.1\r\n"
+		self.monitorbuf = b"POST /rest/system/ups/monitor HTTP/1.0\r\n"
 		self.monitorbuf += self.reqheaders
 		self.monitorbuf += b"Content-Type: application/json\r\n"
 		self.monitorbuf += b"Content-Length: %d\r\n" % len(monitorbody)
