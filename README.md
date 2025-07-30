@@ -3,7 +3,7 @@ upsmonitor-tk
 
 upsmonitor is a small Python/Tk-based client for remote UPS status monitoring via NUT or apcupsd.
 
-It requires Python 2.5 or later, and has been tested on Linux and Windows 98/XP/11.
+It requires Python 2.5 or later, and has been tested on Linux and Windows 95/98/2000/XP/Vista/7/10/11.
 
 ![Screenshot](doc/img_win98.png)
 ![Screenshot](doc/img_win11.png)
