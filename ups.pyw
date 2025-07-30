@@ -597,9 +597,6 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.1\r\n" % nameenc
 		self.requestbuf += self.reqheaders
 		self.requestbuf += b"\r\n"
-		xprint("XXX ---")
-		xprint(self.requestbuf.decode())
-		xprint("XXX ---")
 
 		# 'monitor once' request
 		monitorbody = json.dumps({"numbers": self.upsname, "once": ""}).encode()
@@ -609,9 +606,6 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.monitorbuf += b"Content-Length: %d\r\n" % len(monitorbody)
 		self.monitorbuf += b"\r\n"
 		self.monitorbuf += monitorbody
-		xprint("XXX ---")
-		xprint(self.monitorbuf.decode())
-		xprint("XXX ---")
 
 	def dohttprequest(self, requestbuf):
 		import json
@@ -647,20 +641,14 @@ class MikrotikUps(TcpSocketUpsBase):
 		else:
 			raise UpsProtocolError("HTTP request failed with %r" % (status,))
 
-	def listvars(self):
-		nvars = {}
-		nvars["ups.mfr"] = "APC"
-
-		# load /print data
-
+	def getprintdata(self):
 		rosdata = self.dohttprequest(self.requestbuf)
-		xprint("XXX data before grep = %r" % (rosdata,))
 		rosdata = [x for x in rosdata if x.get("name") == self.upsname]
-		xprint("XXX data after grep = %r" % (rosdata,))
 		if not rosdata:
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
 		rosdata = rosdata[0]
 
+		nvars = {}
 		consumed = set([
 			".id",
 			"alarm-setting",
@@ -685,13 +673,15 @@ class MikrotikUps(TcpSocketUpsBase):
 		for roskey, rosval in rosdata.items():
 			if roskey not in consumed:
 				xprint("XXX unconsumed RouterOS print attribute %r = %r" % (roskey, rosval))
-
-		# load /monitor data
-
+		return nvars
+	
+	def getmonitordata(self):
 		rosdata = self.dohttprequest(self.monitorbuf)
-		xprint("XXX monitor data = %r" % (rosdata,))
+		if not rosdata:
+			raise UpsError("Could not fetch monitor status for %r" % (self.upsname))
 		rosdata = rosdata[0]
 
+		nvars = {}
 		consumed = set()
 		stringmap = [
 			("transfer-cause",	"input.transfer.reason"),
@@ -743,12 +733,17 @@ class MikrotikUps(TcpSocketUpsBase):
 			if roskey not in consumed:
 				xprint("XXX unconsumed RouterOS monitor attribute %r = %r" % (roskey, rosval))
 		nvars["ups.status"] = " ".join(flags) or "??UNKNOWN??"
+		return nvars
 
+	def listvars(self):
+		nvars = {}
+		nvars["ups.mfr"] = "APC"
+		nvars.update(self.getprintdata())
+		nvars.update(self.getmonitordata())
 		# New NUT mirrors some ups.* fields to device.*, mimic that
 		for skey in ["mfr", "model", "serial"]:
 			if "ups.%s" % skey in nvars:
 				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
-
 		return nvars
 
 	#def close(self):
