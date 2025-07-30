@@ -613,12 +613,12 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.connect()
 		self.stream.write(requestbuf)
 		self.stream.flush()
-		status = self.stream.readline()
 		resp = self.stream.read(1*1024*1024)
 		self.close()
 
 		headers, body = resp.split(b"\r\n\r\n")
 		headers = headers.split(b"\r\n")
+		status = headers.pop(0)
 		sproto, scode = status.split(b" ")[:2]
 		if sproto[:7] != b"HTTP/1.":
 			raise UpsProtocolError("bad response status header %r" % (status,))
