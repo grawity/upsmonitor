@@ -649,6 +649,7 @@ class MikrotikUps(TcpSocketUpsBase):
 
 	def listvars(self):
 		nvars = {}
+		nvars["ups.mfr"] = "APC"
 
 		# load /print data
 
@@ -660,14 +661,23 @@ class MikrotikUps(TcpSocketUpsBase):
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
 		rosdata = rosdata[0]
 
+		consumed = set([
+			".id",
+			"alarm-setting",
+			"disabled",
+			"invalid",
+			"min-runtime",
+			"offline-time", # this likely has a mapping
+			"on-line",
+		])
 		stringmap = [
 			("name",				"ups.id"),
 			("model",				"ups.model"),
 			("serial",				"ups.serial"),
 			("firmware",			"ups.version"),
 			("manufacture-date",	"ups.mfr.date"),
+			("port",				"driver.parameter.port"),
 		]
-		consumed = set()
 		for mtikkey, nutkey in stringmap:
 			if mtikkey in rosdata:
 				nvars[nutkey] = rosdata[mtikkey]
@@ -682,6 +692,7 @@ class MikrotikUps(TcpSocketUpsBase):
 		xprint("XXX monitor data = %r" % (rosdata,))
 		rosdata = rosdata[0]
 
+		consumed = set()
 		stringmap = [
 			("transfer-cause",	"input.transfer.reason"),
 		]
@@ -708,7 +719,6 @@ class MikrotikUps(TcpSocketUpsBase):
 			("low-battery",		"LB"),
 		]
 		flags = []
-		consumed = set()
 		for mtikkey, nutkey in stringmap:
 			if mtikkey in rosdata:
 				nvars[nutkey] = rosdata[mtikkey]
