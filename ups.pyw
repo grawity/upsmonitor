@@ -1,4 +1,5 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
+import collections
 import math
 import optparse
 import os
@@ -591,7 +592,7 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.reqheaders  = b"Host: %s\r\n" % self.hostname.encode()
 		self.reqheaders += b"Authorization: Basic %s\r\n" % authenc
 		self.reqheaders += b"Accept: application/json\r\n"
-		self.reqheaders += b"Connection: close\r\n"
+		self.reqheaders += b"Connection: keep-alive\r\n"
 
 		# 'print' request
 		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.0\r\n" % nameenc
@@ -606,38 +607,66 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.monitorbuf += b"Content-Length: %d\r\n" % len(monitorbody)
 		self.monitorbuf += b"\r\n"
 		self.monitorbuf += monitorbody
-
+	
 	def dohttprequest(self, requestbuf):
-		import json
-
-		self.connect()
+		self.tryconnect()
 		self.stream.write(requestbuf)
 		self.stream.flush()
-		resp = self.stream.read(1*1024*1024)
-		self.close()
-
-		headers, body = resp.split(b"\r\n\r\n")
-		headers = headers.split(b"\r\n")
-		status = headers.pop(0)
+		status = self.stream.readline()
 		sproto, scode = status.split(b" ")[:2]
 		if sproto[:7] != b"HTTP/1.":
 			raise UpsProtocolError("bad response status header %r" % (status,))
+		headers = collections.defaultdict(list)
+		lasthdr = None
+		while True:
+			line = self.stream.readline().rstrip(b"\r\n")
+			if len(line) == 0:
+				break
+			elif line[0:1] in b" \t":
+				headers[lasthdr][-1] += b" " + line.strip(b" \t")
+			else:
+				hdrname, hdrvalue = line.split(b":", 1)
+				lasthdr = hdrname.lower()
+				headers[lasthdr].append(hdrvalue.strip())
+		if scode[0:1] == b"1":
+			raise UpsProtocoLError("unsupported HTTP status %r" % (scode,))
+		elif scode in [b"204", b"304"]:
+			body = b""
+		elif b"transfer-encoding" in headers:
+			raise UpsProtocolError("unsupported Transfer-Encoding")
+		elif b"content-length" in headers:
+			bodylen = int(b",".join(headers[b"content-length"]))
+			body = self.stream.read(bodylen)
+			if len(body) != bodylen:
+				raise UpsProtocolError("truncated response (got %d/%d bytes)" % (len(body), bodylen))
+		else:
+			raise UpsProtocolError("no Content-Length in response")
+		defconn = (b"close" if sproto == b"HTTP/1.0" else b"keep-alive")
+		connmode = (b",".join(headers[b"connection"]))
+		if (connmode or defconn).lower() != b"keep-alive":
+			xprint("closing non-keepalive HTTP connection")
+			self.close()
+		return status, scode, headers, body
+
+	def doapirequest(self, requestbuf):
+		import json
+		status, scode, headers, body = self.dohttprequest(requestbuf)
 		if scode == b"200":
-			if b"Content-Type: application/json" not in headers:
+			if headers.get(b"content-type") != [b"application/json"]:
 				raise UpsProtocolError("wrong HTTP content type: %r" % (headers,))
 			return json.loads(body)
 		elif scode == b"400":
-			if b"Content-Type: application/json" not in headers:
+			if headers.get(b"content-type") != [b"application/json"]:
 				raise UpsProtocolError("HTTP request failed with %r" % (body,))
 			data = json.loads(body)
-			raise UpsError("HTTP request failed with %r" % (data["detail"]))
+			raise UpsError("request failed with %r" % (data["detail"]))
 		elif scode == b"401":
 			raise UpsError("login failure")
 		else:
-			raise UpsProtocolError("HTTP request failed with %r" % (status,))
+			raise UpsProtocolError("request failed with %r" % (status,))
 
 	def getprintdata(self):
-		rosdata = self.dohttprequest(self.requestbuf)
+		rosdata = self.doapirequest(self.requestbuf)
 		rosdata = [x for x in rosdata if x.get("name") == self.upsname]
 		if not rosdata:
 			raise UpsError("No such UPS %r on device %r" % (self.upsname, self.hostname))
@@ -669,9 +698,9 @@ class MikrotikUps(TcpSocketUpsBase):
 			if roskey not in consumed:
 				xprint("XXX unconsumed RouterOS print attribute %r = %r" % (roskey, rosval))
 		return nvars
-	
+
 	def getmonitordata(self):
-		rosdata = self.dohttprequest(self.monitorbuf)
+		rosdata = self.doapirequest(self.monitorbuf)
 		if not rosdata:
 			raise UpsError("Could not fetch monitor status for %r" % (self.upsname))
 		rosdata = rosdata[0]
@@ -740,9 +769,6 @@ class MikrotikUps(TcpSocketUpsBase):
 			if "ups.%s" % skey in nvars:
 				nvars["device.%s" % skey] = nvars["ups.%s" % skey]
 		return nvars
-
-	#def close(self):
-	#	pass
 
 class TkCustomWidget:
 	def config(self, **kv):
