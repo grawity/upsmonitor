@@ -764,11 +764,11 @@ class MikrotikUps(TcpSocketUpsBase):
 
 		# 'monitor once' request
 		monitorbody = json_dump({"numbers": self.upsname, "once": ""}).encode()
-		self.monitorbuf = "POST /rest/system/ups/monitor HTTP/1.0\r\n".encode()
+		self.monitorbuf = ("POST /rest/system/ups/monitor HTTP/1.0\r\n").encode()
 		self.monitorbuf += self.reqheaders.encode()
-		self.monitorbuf += "Content-Type: application/json\r\n".encode()
+		self.monitorbuf += ("Content-Type: application/json\r\n").encode()
 		self.monitorbuf += ("Content-Length: %d\r\n" % len(monitorbody)).encode()
-		self.monitorbuf += "\r\n".encode()
+		self.monitorbuf += ("\r\n").encode()
 		self.monitorbuf += monitorbody
 	
 	def dohttprequest(self, requestbuf):
