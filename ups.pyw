@@ -1,4 +1,5 @@
 # -*- coding: utf-8; indent-tabs-mode: t; tab-width: 4 -*- vim: noet
+import base64
 import collections
 import math
 import optparse
@@ -9,6 +10,14 @@ import socket
 import struct
 import sys
 import threading
+
+def xprint(*text):
+	# Compat with Python 2.4 on Etch which lacks print_function (as well as
+	# with_statement for that matter). Note: sys.stdout is None on pythonw
+	if not sys.stdout:
+		return
+	sys.stdout.write(" ".join(map(str, text)) + "\n")
+	sys.stdout.flush()
 
 if sys.version_info[0] <= 2:
 	import Tkinter as tk
@@ -26,12 +35,167 @@ else:
 	from tkinter.simpledialog import askstring
 	from tkinter.messagebox import showinfo, showerror
 
-def xprint(*text):
-	# Compat with Python 2.4 on Etch which lacks print_function (as well as
-	# with_statement for that matter). Note: sys.stdout is None on pythonw
-	if not sys.stdout:
-		return
-	sys.stdout.write(" ".join(map(str, text)) + "\n")
+try:
+	from io import StringIO
+except ImportError:
+	from StringIO import StringIO
+
+try:
+	from json import loads as json_load, dumps as json_dump
+except ImportError:
+	class JsonReader:
+		ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		FIRSTNUM = "0123456789-"
+		TOKENS = {"true": True, "false": False, "null": None}
+		ESCAPES = {"\"":"\"", "\\":"\\", "b":"\b", "f":"\f", "n":"\n", "r":"\r", "t":"\t"}
+
+		def __init__(self, buf):
+			self.buf = StringIO(buf)
+			self.advance()
+
+		def advance(self):
+			self.char = self.buf.read(1)
+			return self.char
+
+		def skipws(self):
+			while self.char in " \t\r\n":
+				self.advance()
+			return self.char
+
+		def skipchar(self, char):
+			if self.char == char:
+				return self.advance()
+			raise ValueError("char %r found where %r expected" % (self.char, char))
+
+		def tryskipchar(self, char):
+			if self.char == char:
+				return self.advance()
+			return None
+		
+		def scannum(self):
+			val = ""
+			while self.char in "0123456789.+-Ee":
+				val += self.char; self.advance()
+			return float(val) if ("." in val or "e" in val) else int(val)
+
+		def scantok(self):
+			val = ""
+			while self.char in self.ALPHA:
+				val += self.char; self.advance()
+			return self.TOKENS[val]
+
+		def scanstr(self):
+			self.skipchar("\"")
+			val = ""
+			while self.char != "\"":
+				if self.char == "\\":
+					self.advance()
+					if self.char in self.ESCAPES:
+						val += self.ESCAPES[self.char]; self.advance()
+					elif self.char == "u":
+						num = ""
+						for _ in range(4): num += self.advance()
+						val += chr(int(num, 16)); self.advance()
+					else:
+						raise ValueError("bad escape \\%s" % (self.char,))
+				else:
+					val += self.char; self.advance()
+			self.skipchar("\"")
+			return val
+
+		def scanarr(self):
+			out = []
+			self.skipchar("[")
+			while True:
+				self.skipws(); out.append(self.scan())
+				self.skipws()
+				if not self.tryskipchar(","):
+					break
+			self.skipchar("]")
+			return out
+
+		def scanobj(self):
+			out = {}
+			self.skipchar("{")
+			while True:
+				self.skipws(); key = self.scanstr()
+				self.skipws(); self.skipchar(":")
+				self.skipws(); out[key] = self.scan()
+				self.skipws()
+				if not self.tryskipchar(","):
+					break
+			self.skipchar("}")
+			return out
+
+		def scan(self):
+			self.skipws()
+			if not self.char:					return None
+			elif self.char == "{":				return self.scanobj()
+			elif self.char == "[":				return self.scanarr()
+			elif self.char == "\"":				return self.scanstr()
+			elif self.char in self.FIRSTNUM:	return self.scannum()
+			elif self.char in self.ALPHA:		return self.scantok()
+			else: raise ValueError("bad char %r" % (self.char,))
+
+	class JsonWriter:
+		ESCAPES = {"\"":"\\\"","\\":"\\\\","\t":"\\t","\n":"\\n"}
+
+		def __init__(self):
+			self.buf = None
+
+		def dumpstr(self, val):
+			self.buf.write("\"")
+			for c in val:
+				if c in self.ESCAPES:
+					self.buf.write(self.ESCAPES[c])
+				elif ord(c) < 0x20 or ord(c) > 0x80:
+					self.buf.write("\\u%04x" % ord(c))
+				else:
+					self.buf.write(c)
+			self.buf.write("\"")
+
+		def dumpobj(self, val):
+			self.buf.write("{")
+			for i, key in enumerate(val):
+				if i: self.buf.write(",")
+				self.dumpstr(key)
+				self.buf.write(":")
+				self.dumpval(val[key])
+			self.buf.write("}")
+
+		def dumparr(self, val):
+			self.buf.write("[")
+			for i, x in enumerate(val):
+				if i: self.buf.write(",")
+				self.dumpval(x)
+			self.buf.write("]")
+
+		def dumpval(self, val):
+			if val is None:
+				self.buf.write("null")
+			elif isinstance(val, bool):
+				self.buf.write("true" if val else "false")
+			elif isinstance(val, (int, float)):
+				self.buf.write(str(val))
+			elif isinstance(val, str):
+				self.dumpstr(val)
+			elif isinstance(val, dict):
+				self.dumpobj(val)
+			elif isinstance(val, list):
+				self.dumparr(val)
+			else:
+				raise Exception("don't know how to dump %r" % type(val))
+
+		def dump(self, val):
+			self.buf = StringIO()
+			self.dumpval(val)
+			return self.buf.getvalue()
+
+	def json_load(buf):
+		return JsonReader(buf).scan()
+	
+	def json_dump(obj):
+		return JsonWriter().dump(obj)
 
 confpaths = []
 interval = 5
@@ -583,29 +747,28 @@ class MikrotikUps(TcpSocketUpsBase):
 		self.hostname = res.hostname
 		TcpSocketUpsBase.__init__(self, "%s@%s" % (self.upsname, self.hostname))
 
-		import base64
-		import json
-		username = urlparse.unquote(res.username or "upsmon").encode()
-		password = urlparse.unquote(res.password or "upsmon").encode()
-		nameenc = urlparse.quote(self.upsname).encode()
-		authenc = base64.b64encode(username + b":" + password)
-		self.reqheaders  = b"Host: %s\r\n" % self.hostname.encode()
-		self.reqheaders += b"Authorization: Basic %s\r\n" % authenc
-		self.reqheaders += b"Accept: application/json\r\n"
-		self.reqheaders += b"Connection: keep-alive\r\n"
+		username = urlparse.unquote(res.username or "upsmon")
+		password = urlparse.unquote(res.password or "upsmon")
+		nameenc = urlparse.quote(self.upsname)
+		authstr = username + ":" + password
+		authenc = base64.b64encode(authstr.encode()).decode()
+		self.reqheaders = "Host: %s\r\n" % self.hostname
+		self.reqheaders += "Authorization: Basic %s\r\n" % authenc
+		self.reqheaders += "Accept: application/json\r\n"
+		self.reqheaders += "Connection: keep-alive\r\n"
 
 		# 'print' request
-		self.requestbuf = b"GET /rest/system/ups?name=%s HTTP/1.0\r\n" % nameenc
-		self.requestbuf += self.reqheaders
-		self.requestbuf += b"\r\n"
+		self.requestbuf = ("GET /rest/system/ups?name=%s HTTP/1.0\r\n" % nameenc).encode()
+		self.requestbuf += self.reqheaders.encode()
+		self.requestbuf += "\r\n".encode()
 
 		# 'monitor once' request
-		monitorbody = json.dumps({"numbers": self.upsname, "once": ""}).encode()
-		self.monitorbuf = b"POST /rest/system/ups/monitor HTTP/1.0\r\n"
-		self.monitorbuf += self.reqheaders
-		self.monitorbuf += b"Content-Type: application/json\r\n"
-		self.monitorbuf += b"Content-Length: %d\r\n" % len(monitorbody)
-		self.monitorbuf += b"\r\n"
+		monitorbody = json_dump({"numbers": self.upsname, "once": ""}).encode()
+		self.monitorbuf = "POST /rest/system/ups/monitor HTTP/1.0\r\n".encode()
+		self.monitorbuf += self.reqheaders.encode()
+		self.monitorbuf += "Content-Type: application/json\r\n".encode()
+		self.monitorbuf += ("Content-Length: %d\r\n" % len(monitorbody)).encode()
+		self.monitorbuf += "\r\n".encode()
 		self.monitorbuf += monitorbody
 	
 	def dohttprequest(self, requestbuf):
@@ -649,16 +812,15 @@ class MikrotikUps(TcpSocketUpsBase):
 		return status, scode, headers, body
 
 	def doapirequest(self, requestbuf):
-		import json
 		status, scode, headers, body = self.dohttprequest(requestbuf)
 		if scode == b"200":
 			if headers.get(b"content-type") != [b"application/json"]:
 				raise UpsProtocolError("wrong HTTP content type: %r" % (headers,))
-			return json.loads(body)
+			return json_load(body.decode())
 		elif scode == b"400":
 			if headers.get(b"content-type") != [b"application/json"]:
 				raise UpsProtocolError("HTTP request failed with %r" % (body,))
-			data = json.loads(body)
+			data = json_load(body.decode())
 			raise UpsError("request failed with %r" % (data["detail"]))
 		elif scode == b"401":
 			raise UpsError("login failure")
